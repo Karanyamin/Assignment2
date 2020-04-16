@@ -39,7 +39,7 @@ int main(int argc, char** argv){
     } else {
         printf("Client socket creation: SUCCESS\n");
     }
-    struct hostent* result = gethostbyname("127.0.0.1");
+    struct hostent* result = gethostbyname("172.17.11.208");
     struct sockaddr_in serverAddress;
 
     bzero((char*)&serverAddress, sizeof(serverAddress));
