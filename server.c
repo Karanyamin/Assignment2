@@ -19,27 +19,6 @@
 long get_file_length(char* file);
 char* int_to_string(long num);
 
-void chatFunction(int socket){
-    char* str = malloc(sizeof(char) * 256);
-    int n;
-    while(true){
-        bzero(str, sizeof(char) * 256);
-        read(socket, str, sizeof(char) * 256);
-        printf("Message sent by Saavi: %sEnter message for Saavi: ", str);
-        bzero(str, sizeof(char) * 256);
-        n = 0;
-        while ((str[n++] = getchar()) != '\n'){
-            //Keeps looping until ENTER is pressed
-        }
-        write(socket, str, sizeof(char) * 256);
-        
-        if (strncmp(str, "exit", 4) == 0){
-            printf("Ending chat session\n");
-            break;
-        }
-    }
-    free(str);    
-}
 void calculate_and_update_hash(char* filepath, unsigned char* hash){ //Hash must be of Length SHA_DIGEST_LENGTH
     //unsigned char* hash = malloc(sizeof(char) * SHA_DIGEST_LENGTH);
     char buffer[5000000];
@@ -96,18 +75,6 @@ void delete_last_file_path(char* path, char* nextDirectoryName){
 }
 
 bool in_ignore_list(char* name){
-    /*
-    if (strcmp(name, ".git") == 0){
-        return true;
-    } else if (strcmp(name, ".") == 0){
-        return true;
-    } else if (strcmp(name, "..") == 0){
-        return true; 
-    } else {
-        return false;
-    } */
-
-    
     if (strcmp(name, ".vscode") == 0){
         return true;
     } else if (strcmp(name, "temp") == 0){
@@ -182,16 +149,6 @@ int write_bytes_to_socket(char* file, int socket){
     write(socket, buffer, size);
     free(buffer);
     fclose(fp);
-    /*
-    int n = 0;
-    char c;
-    while ((c = getc(fp)) != EOF){
-        buffer[n++] = c;
-    }
-    write(socket, buffer, size);
-    free(buffer);
-    fclose(fp);
-    */
     return 1;
 }
 
@@ -379,6 +336,35 @@ long get_file_length(char* file){
     return result;
 }
 
+void create(char* project_name, int socket){
+    //Error checking
+    char path[NAME_MAX];
+    bzero(path, sizeof(path));
+    if (project_exists_on_server(project_name)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    if (mkdir(project_name, 0777) == -1){
+        printf("The server failed to make the directory\n");
+        return;
+    }
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project_name);
+    append_file_path(path, ".Manifest");
+    int fd = open(path, O_WRONLY | O_CREAT, 00600);
+    if (fd == -1){
+        printf("The server failed to create the Manifest in the directory\n");
+        return;
+    }
+    write(fd, "1\n", 2);
+    close(fd);
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -401,7 +387,8 @@ void handle_connection(int socket){
         } else if (strcmp(buffer, "push") == 0){
             return;
         } else if (strcmp(buffer, "create") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            create(project_name, socket);
         } else if (strcmp(buffer, "destory") == 0){
             return;
         } else if (strcmp(buffer, "currentversion") == 0){

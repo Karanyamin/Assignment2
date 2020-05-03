@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <sys/types.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -32,27 +33,26 @@ void delete_last_file_path(char* path, char* nextDirectoryName){
     bzero(path+(length1 - length2 - 1), length2 + 1);
 }
 
-void chatFunction(int socket){	
-    char str[256];
-    int n;
-    while(true){
-        bzero(str, sizeof(str));
-        n = 0;
-        printf("Enter message to Karan: ");
-        while ((str[n++] = getchar()) != '\n'){
-            //Keeps looping until ENTER is pressed
-        }
-        write(socket, str, sizeof(str));
-		if (strncmp(str, "exit", 4) == 0){
-            printf("Ending chat session\n");
-            break;
-        }
-        bzero(str, sizeof(str));
-        read(socket, str, sizeof(str));
-        printf("Message sent by Karan: %s", str);
+bool project_exists_on_client(char* name){
+    if (strcmp(name, "ignore") == 0) return true;
+
+    DIR* directory = opendir(".");
+    if (directory == NULL){
+        printf("error on checking if project %s exists on server\n", name);
+        exit(1);
     }
-	
-} 
+    struct dirent* handle;
+
+    while ((handle = readdir(directory)) != NULL){
+        if (strcmp(handle->d_name, name) == 0){
+            printf("Project exists on client\n");
+            return true;
+        }
+    }
+    
+    closedir(directory);
+    return false;
+}
 
 void calculate_and_update_hash(char* filepath, unsigned char* hash){ //Hash must be of Length SHA_DIGEST_LENGTH
     //unsigned char* hash = malloc(sizeof(char) * SHA_DIGEST_LENGTH);
@@ -115,6 +115,15 @@ void valid_command(int argc, char** argv){
         printf("Invalid command\n");
         exit(1);
     }
+}
+
+bool file_exists(char* filename){
+    int fd = open(filename, O_RDWR);
+    if (fd == -1){
+        printf("File %s does not exist\n", filename);
+        return false;
+    }
+    return true;
 }
 
 void printList(node* head){
@@ -201,6 +210,92 @@ void create_Directory_Path(char* path){
     }
 }
 
+void sendFile(int socket){
+    char buffer[PATH_MAX];
+    char c;
+    int number_of_files = 0;
+    char* eptr;
+    bzero(buffer, sizeof(buffer));
+    int n = 0;
+    while(read(socket, &c, 1) != 0 && c != ':'){
+        buffer[n++] = c;
+    }
+    number_of_files = strtol(buffer, &eptr, 0); 
+    if (number_of_files == 0){
+        if (errno == EINVAL || errno == ERANGE){
+            printf("Conversion error occurred: %d\n", errno);
+            write(socket, "done", 5);
+            close(socket);
+            exit(1);
+        } 
+    }
+    //make a linked list with number_of_files many nodes
+    node * head = NULL;
+    while (number_of_files > 0){
+        int file_name_length = 0;
+        char filepath[PATH_MAX];
+        long number_of_bytes = 0;
+        bzero(buffer, sizeof(buffer));
+        bzero(filepath, sizeof(filepath));
+        n = 0;
+        while(read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        }
+        file_name_length = strtol(buffer, &eptr, 0);
+        if (file_name_length == 0){
+            if (errno == EINVAL || errno == ERANGE){
+                printf("Conversion error occurred: %d\n", errno);
+                write(socket, "done", 5);
+                close(socket);
+                exit(1);
+            } 
+        }
+        bzero(buffer, sizeof(buffer));
+        read(socket, buffer, file_name_length);
+        strcpy(filepath, buffer);
+        bzero(buffer, sizeof(buffer));
+        n = 0;
+        while(read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        }
+        number_of_bytes = strtol(buffer, &eptr, 0);
+        if (number_of_bytes == 0){
+            if (errno == EINVAL || errno == ERANGE){
+                printf("Conversion error occurred: %d\n", errno);
+                write(socket, "done", 5);
+                close(socket);
+                exit(1);
+            } 
+        }
+        head = append_To_List(head, filepath, number_of_bytes);
+        number_of_files--;
+    }
+    printList(head);
+    while (head != NULL){
+        create_Directory_Path(head->filePath);
+        int fd = open(head->filePath, O_WRONLY | O_CREAT, 00600);
+        if (fd == -1){
+            printf("Error on opening filepath %s\n", head->filePath);
+            write(socket, "done", 5);
+            close(socket);
+            exit(1);
+        }
+        char* bytes = malloc(sizeof(char) * head->length);
+        int bytes_read = 0, len = 0;
+        while (bytes_read < head->length && ((len = recv(socket, bytes + bytes_read, head->length-bytes_read, 0)) > 0)) {
+            bytes_read += len;
+        }
+        int current_write = 0;
+        int total_write = 0;
+        do {
+            current_write = write(fd, bytes+total_write, head->length - total_write);
+            total_write += current_write; 
+        } while (current_write > 0);
+        close(fd);
+        head = head->next;
+    }
+}
+
 void testcheckout(int socket, char* project_name){
     char buffer[PATH_MAX];
     char c;
@@ -209,6 +304,7 @@ void testcheckout(int socket, char* project_name){
     read(socket, buffer, sizeof(buffer));
     if (strcmp(buffer, "fail") == 0){
         printf("failure in finding project on server\n");
+        write(socket, "done", 5);
         close(socket);
         exit(1);
     } else if (strcmp(buffer, "success") == 0){
@@ -224,95 +320,37 @@ void testcheckout(int socket, char* project_name){
         else if (strcmp(buffer, "sendfile") == 0) sendfile = true;
         //printf("%s\n", buffer);
         if (sendfile){
-            int number_of_files = 0;
-            char* eptr;
-            bzero(buffer, sizeof(buffer));
-            n = 0;
-            while(read(socket, &c, 1) != 0 && c != ':'){
-                buffer[n++] = c;
-            }
-            number_of_files = strtol(buffer, &eptr, 0); 
-            if (number_of_files == 0){
-                if (errno == EINVAL || errno == ERANGE){
-                    printf("Conversion error occurred: %d\n", errno);
-                    write(socket, "done", 5);
-                    close(socket);
-                    exit(0);
-                } 
-            }
-            //make a linked list with number_of_files many nodes
-            node * head = NULL;
-            while (number_of_files > 0){
-                int file_name_length = 0;
-                char filepath[PATH_MAX];
-                long number_of_bytes = 0;
-                bzero(buffer, sizeof(buffer));
-                bzero(filepath, sizeof(filepath));
-                n = 0;
-                while(read(socket, &c, 1) != 0 && c != ':'){
-                    buffer[n++] = c;
-                }
-                file_name_length = strtol(buffer, &eptr, 0);
-                if (file_name_length == 0){
-                    if (errno == EINVAL || errno == ERANGE){
-                        printf("Conversion error occurred: %d\n", errno);
-                        write(socket, "done", 5);
-                        close(socket);
-                        exit(0);
-                    } 
-                }
-                bzero(buffer, sizeof(buffer));
-                read(socket, buffer, file_name_length);
-                strcpy(filepath, buffer);
-                bzero(buffer, sizeof(buffer));
-                n = 0;
-                while(read(socket, &c, 1) != 0 && c != ':'){
-                    buffer[n++] = c;
-                }
-                number_of_bytes = strtol(buffer, &eptr, 0);
-                if (number_of_bytes == 0){
-                    if (errno == EINVAL || errno == ERANGE){
-                        printf("Conversion error occurred: %d\n", errno);
-                        write(socket, "done", 5);
-                        close(socket);
-                        exit(0);
-                    } 
-                }
-                head = append_To_List(head, filepath, number_of_bytes);
-                number_of_files--;
-            }
-            printList(head);
-            while (head != NULL){
-                create_Directory_Path(head->filePath);
-                int fd = open(head->filePath, O_WRONLY | O_CREAT, 00600);
-                if (fd == -1){
-                    printf("Error on opening filepath %s\n", head->filePath);
-                    write(socket, "done", 5);
-                    close(socket);
-                    exit(1);
-                }
-                char* bytes = malloc(sizeof(char) * head->length);
-                int bytes_read = 0, len = 0;
-                while (bytes_read < head->length && ((len = recv(socket, bytes + bytes_read, head->length-bytes_read, 0)) > 0)) {
-                    bytes_read += len;
-                }
-                //long enough = read(socket, bytes, head->length);
-                //printf("I read %ld\n", enough);
-                int current_write = 0;
-                int total_write = 0;
-                do {
-                    current_write = write(fd, bytes+total_write, head->length - total_write);
-                    total_write += current_write; 
-                } while (current_write > 0);
-                close(fd);
-                head = head->next;
-            }
+            sendFile(socket);
             sendfile = false;
         }
         bzero(buffer, sizeof(buffer));
         n = 0;
     }
     write(socket, "done", 5);
+}
+
+void testcreate(int socket, char* project_name){
+    char buffer[NAME_MAX];
+    char c;
+    int n = 0;
+    bzero(buffer, sizeof(buffer));
+    read(socket, buffer, sizeof(buffer));
+    if (strcmp(buffer, "fail") == 0){
+        printf("project already exists on server\n");
+        write(socket, "done", 5);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("project does not exist on create...attempting to create project\n");
+    }
+    //Project has been created on server, time to use checkout to copy it over to our local machine
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, "checkout");
+    write(socket, buffer, sizeof(buffer));
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, project_name);
+    write(socket, buffer, sizeof(buffer));
+    testcheckout(socket, project_name);
 }
 
 void handle_connection(int socket, char** argv){
@@ -324,11 +362,14 @@ void handle_connection(int socket, char** argv){
     bzero(arg, sizeof(arg));
 
     if (strcmp(argv[1], "checkout") == 0) {
-        strcpy(command, argv[1]);
-        strcpy(project_name, argv[2]);
-        write(socket, command, sizeof(command));
-        write(socket, project_name, sizeof(project_name));
-        testcheckout(socket, project_name);
+        //Check if project exists on client side
+        if (!project_exists_on_client(argv[2])){
+            strcpy(command, argv[1]);
+            strcpy(project_name, argv[2]);
+            write(socket, command, sizeof(command));
+            write(socket, project_name, sizeof(project_name));
+            testcheckout(socket, project_name);
+        }
     } else if (strcmp(argv[1], "update") == 0){
         return;
     } else if (strcmp(argv[1], "upgrade") == 0){
@@ -338,7 +379,13 @@ void handle_connection(int socket, char** argv){
     } else if (strcmp(argv[1], "push") == 0){
         return;
     } else if (strcmp(argv[1], "create") == 0){
-        return;
+        if (!project_exists_on_client(argv[2])){
+            strcpy(command, argv[1]);
+            strcpy(project_name, argv[2]);
+            write(socket, command, sizeof(command));
+            write(socket, project_name, sizeof(project_name));
+            testcreate(socket, project_name);
+        }
     } else if (strcmp(argv[1], "destory") == 0){
         return;
     } else if (strcmp(argv[1], "currentversion") == 0){
@@ -347,11 +394,155 @@ void handle_connection(int socket, char** argv){
         return;
     } else if (strcmp(argv[1], "rollback") == 0){
         return;
-    } else if (strcmp(argv[1], "done") == 0){
+    } /*else if (strcmp(argv[1], "done") == 0){
         strcpy(command, argv[1]);
         write(socket, command, sizeof(command));
-    }
+    }*/
+    strcpy(command, "done");
+    write(socket, command, sizeof(command));
     close(socket);
+}
+
+void testadd(char* project, char* filename){
+    //Error checking
+    if (!project_exists_on_client(project)){
+        printf("Project does not exist on client\n");
+        return;
+    }
+    //Check if file and Manifest exists
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    if (file_exists(filename) && file_exists(buffer)){
+        //Create hash for file
+        unsigned char hash[SHA_DIGEST_LENGTH];
+        bzero(hash, sizeof(hash));
+        calculate_and_update_hash(filename, hash);
+        //Add file to manifest
+        FILE* fp = fopen(buffer, "a");
+        bzero(buffer, sizeof(buffer));
+        strcat(buffer, "1 ");
+        strcat(buffer, project);
+        strcat(buffer, " ");
+        strcat(buffer, filename);
+        strcat(buffer, " ");
+        int len = strlen(buffer);
+        int i;
+        for (i = 0; i < SHA_DIGEST_LENGTH; i++){
+            len += sprintf(buffer+len, "%02x", hash[i]);
+        }
+        //strcat(buffer, hash);
+        strcat(buffer, "\n");
+        fprintf(fp, buffer);
+        fclose(fp);
+    }
+}
+
+long get_file_length(char* file){
+    FILE* fd = fopen(file, "r");
+    if (fd == NULL){
+        printf("Error in get_file_length trying to open file\n");
+        return -1;
+    }
+    if (fseek(fd, 0L, SEEK_END) != 0){
+        printf("Error in get_file_length trying to seek file\n");
+        return -1;;
+    }
+
+    long result = ftell(fd);
+    fclose(fd);
+    return result;
+}
+
+/*
+bool contains_project_and_file(const char* buffer, char* project, char* file){
+    char copy[PATH_MAX];
+    bzero(copy, sizeof(copy));
+    strcpy(copy, buffer);
+    char delim[2] = " ";
+    char* token = strtok(copy, delim);
+
+    bool project_exists = true, file_exists = true;
+
+    
+    while((token = strtok(NULL, delim)) != NULL){
+        if (strcmp(token, project) == 0){
+            project_exists = true;
+        } else if (strcmp(token, file) == 0){
+            file_exists = true;
+        }
+    }
+    
+    if (project_exists && file_exists) return true;
+    else return false;
+}
+*/
+
+void testremove(char* project, char* file){
+    if (!project_exists_on_client(project)){
+        printf("Project does not exist on client\n");
+        return;
+    }
+    //Check if file and Manifest exists
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    if (file_exists(buffer)){
+        long length = get_file_length(buffer);
+        char* oldstream = malloc(sizeof(char) * length);
+        bzero(oldstream, sizeof(char) * length);
+        FILE* manifestFD = fopen(buffer, "r");
+        if (manifestFD == NULL){
+            printf("error in opening manifest\n");
+            return;
+        }
+        fread(oldstream, 1, length, manifestFD);
+        char* token = strtok(oldstream, "\n");
+        char* newstream = malloc(sizeof(char) * length);
+        bzero(newstream, sizeof(char) * length);
+        strcat(newstream, token);
+        strcat(newstream, "\n");
+        
+        while((token = strtok(NULL, "\n")) != NULL){
+            if(strstr(token, project) == NULL || strstr(token, file) == NULL ){
+                strcat(newstream, token);
+                strcat(newstream, "\n");
+            }
+        }
+
+        FILE* newManifestFD = fopen(buffer, "w");
+        if (newManifestFD == NULL){
+            printf("error in opening new manifest\n");
+            return;
+        }
+        int newSize = strlen(newstream);
+        fwrite(newstream, 1, newSize, newManifestFD);
+        fclose(manifestFD);
+        fclose(newManifestFD);
+    }
+}
+
+bool non_socket_commands(char** argv){
+    char project_name[NAME_MAX];
+    char arg[NAME_MAX];
+    bzero(project_name, sizeof(project_name));
+    bzero(arg, sizeof(arg));
+    if (strcmp(argv[1], "add") == 0){
+        strcpy(project_name, argv[2]);
+        strcpy(arg, argv[3]);
+        testadd(project_name, arg);
+        return true;
+    } else if (strcmp(argv[1], "remove") == 0){
+        strcpy(project_name, argv[2]);
+        strcpy(arg, argv[3]);
+        testremove(project_name, arg);
+        return true;
+    }
+    return false;
 }
 
 int main(int argc, char** argv){
@@ -377,7 +568,7 @@ int main(int argc, char** argv){
             total_written += current_written;
         } while (current_written > 0);
         close(fd);
-    } else {
+    } else if(!non_socket_commands(argv)) {
         if(access(".configure", R_OK) == -1){
             printf("Configure file does not exit, please run configure\n");
             exit(1);
