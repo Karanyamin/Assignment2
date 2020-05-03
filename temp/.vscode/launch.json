@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/client",
-            "args": ["checkout", "ignore"],
+            "args": ["checkout", "project3"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

@@ -14,6 +14,10 @@
 #include <openssl/sha.h>
 #include <dirent.h>
 #include <limits.h>
+#include <math.h>
+
+long get_file_length(char* file);
+char* int_to_string(long num);
 
 void chatFunction(int socket){
     char* str = malloc(sizeof(char) * 256);
@@ -92,6 +96,7 @@ void delete_last_file_path(char* path, char* nextDirectoryName){
 }
 
 bool in_ignore_list(char* name){
+    /*
     if (strcmp(name, ".git") == 0){
         return true;
     } else if (strcmp(name, ".") == 0){
@@ -100,9 +105,9 @@ bool in_ignore_list(char* name){
         return true; 
     } else {
         return false;
-    }
+    } */
 
-    /*
+    
     if (strcmp(name, ".vscode") == 0){
         return true;
     } else if (strcmp(name, "temp") == 0){
@@ -128,7 +133,7 @@ bool in_ignore_list(char* name){
     } else {
         return false;
     }
-    */
+    
 }
 
 void recursiveBehavior(char* path, void (*fnptr)(char*, int), bool openNewDirectories, int socket){
@@ -159,34 +164,225 @@ void recursiveBehavior(char* path, void (*fnptr)(char*, int), bool openNewDirect
     closedir(dir);
 }
 
+int write_bytes_to_socket(char* file, int socket){
+    FILE* fp = fopen(file, "r");
+    if (fp == NULL){
+        printf("error in writing bytes to socket\n");
+        return 0;
+    }
+    long size = get_file_length(file);
+    if (size == -1){
+        return 0;
+    } else if (size == 0){
+        fclose(fp);
+        return 1;
+    }
+    char* buffer = (char*)malloc(sizeof(char) * size);
+    fread(buffer, 1, size, fp);
+    write(socket, buffer, size);
+    free(buffer);
+    fclose(fp);
+    /*
+    int n = 0;
+    char c;
+    while ((c = getc(fp)) != EOF){
+        buffer[n++] = c;
+    }
+    write(socket, buffer, size);
+    free(buffer);
+    fclose(fp);
+    */
+    return 1;
+}
+
+int write_bytes_of_all_files(char* path, int socket){
+
+    DIR* dir = opendir(path);
+    struct dirent * handle;
+
+    if (dir == NULL){
+        printf("Error opening directory with path name: [%s] in get_number_of_files_in_project\n", path);
+        return 0;
+    }
+
+    while ((handle = readdir(dir)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            if (handle->d_type == DT_DIR){
+                append_file_path(path, handle->d_name);
+                if (write_bytes_of_all_files(path, socket) == 0){
+                    return 0;
+                }
+                delete_last_file_path(path, handle->d_name);
+            } else if (handle->d_type == DT_REG){
+                append_file_path(path, handle->d_name);
+                printf("Scanning this file %s for writing bytes to socket\n", path);
+                if (write_bytes_to_socket(path, socket) == 0){
+                    return 0;
+                }
+                delete_last_file_path(path, handle->d_name);
+            }
+        }
+    }
+    closedir(dir);
+    return 1;
+}
+
+int get_number_of_files_in_project(char* path, int* total){
+
+    DIR* dir = opendir(path);
+    struct dirent * handle;
+
+    if (dir == NULL){
+        printf("Error opening directory with path name: [%s] in get_number_of_files_in_project\n", path);
+        return 0;
+    }
+
+    while ((handle = readdir(dir)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            if (handle->d_type == DT_DIR){
+                append_file_path(path, handle->d_name);
+                if(get_number_of_files_in_project(path, total) == 0){
+                    return 0;
+                }
+                delete_last_file_path(path, handle->d_name);
+            } else if (handle->d_type == DT_REG){
+                append_file_path(path, handle->d_name);
+                printf("Scanning this file %s for counting number of files\n", path);
+                delete_last_file_path(path, handle->d_name);
+                (*total)++;
+            }
+        }
+    }
+    closedir(dir);
+    return 1;
+}
+
+int write_all_files_to_socket_in_sequence(char* path, int socket){
+
+    DIR* dir = opendir(path);
+    struct dirent * handle;
+
+    if (dir == NULL){
+        printf("Error opening directory with path name: [%s] in write_all_files_to_socket_in_sequence\n", path);
+        return 0;
+    }
+
+    while ((handle = readdir(dir)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            if (handle->d_type == DT_DIR){
+                append_file_path(path, handle->d_name);
+                if (write_all_files_to_socket_in_sequence(path, socket) == 0){
+                    return 0;
+                }
+                delete_last_file_path(path, handle->d_name);
+            } else if (handle->d_type == DT_REG){
+                append_file_path(path, handle->d_name);
+                printf("Scanning this file %s for appending file to socket\n", path);
+                char* length_of_file = int_to_string(strlen(path));
+                if (length_of_file == NULL) return 0;
+                write(socket, length_of_file, strlen(length_of_file));
+                write(socket, path, strlen(path));
+                char* bytes_in_file = int_to_string(get_file_length(path));
+                if (bytes_in_file == NULL) return 0;
+                write(socket, bytes_in_file, strlen(bytes_in_file));
+                free(length_of_file);
+                free(bytes_in_file);
+                delete_last_file_path(path, handle->d_name);
+            }
+        }
+    }
+    closedir(dir);
+    return 1;
+}
+
 void checkout_write_filepath_to_socket(char* path, int socket){
     write(socket, path, strlen(path));
     write(socket,"|", 1);
 }
 
+char* int_to_string(long num){ //user must free return char*
+    if (num < 0){
+        printf("Why did you give int_to_string a non positive number?\n");
+        return NULL;
+    } else if (num == 0){
+        char* buffer = malloc(sizeof(char) * 3);
+        buffer[0] = '0';
+        buffer[1] = ':';
+        buffer[2] = '\0';
+        return buffer;
+    } else {
+        long enough = (long)((ceil(log10(num))+2)*sizeof(char)); //+2 to accomadate for the delimiter and null character
+        char* buffer = malloc(sizeof(char) * enough);
+        sprintf(buffer, "%ld", num);
+        strcat(buffer, ":");
+        return buffer;
+    }
+}
+
 void checkout(char* project, int socket){
     //Error checking
-    char buffer[256];
-    bzero(buffer, sizeof(buffer));
-    if (!project_exists_on_server(project)){
-        strcpy(buffer, "fail");
-        write(socket, buffer, sizeof(buffer));
-    } else {
-        strcpy(buffer, "success");
-        write(socket, buffer, sizeof(buffer));
-    }
     char path[PATH_MAX];
     bzero(path, sizeof(path));
-    strcpy(path, ".");
-    recursiveBehavior(path, checkout_write_filepath_to_socket, true, socket);
-    strcpy(buffer, "done|");
-    write(socket, buffer, sizeof(buffer));
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    //writing send command to socket
+    write(socket, "sendfile:", 9);
+    //Finding out how many files to send
+    int number_of_files = 0;
+    bzero(path, sizeof(path));
+    strcpy(path, "./");
+    strcat(path, project);
+    if(get_number_of_files_in_project(path, &number_of_files) == 0){
+        printf("Error in getting number of files in project\n");
+        return;
+    }
+    char* number_of_files_s = int_to_string(number_of_files);
+    if (number_of_files_s == NULL) return;
+    write(socket, number_of_files_s, strlen(number_of_files_s));
+    free(number_of_files_s);
+    //write file path names in sequence
+    bzero(path, sizeof(path));
+    strcpy(path, "./");
+    strcat(path, project);
+    if(write_all_files_to_socket_in_sequence(path, socket) == 0){
+        printf("Error in writing all filepath names to socket\n");
+        return;
+    }
+    //write all bytes of all files in order
+    bzero(path, sizeof(path));
+    strcpy(path, "./");
+    strcat(path, project);
+    write_bytes_of_all_files(path, socket);
+    write(socket, ":done:", 7);
+    
+}
+
+long get_file_length(char* file){
+    FILE* fd = fopen(file, "r");
+    if (fd == NULL){
+        printf("Error in get_file_length trying to open file\n");
+        return -1;
+    }
+    if (fseek(fd, 0L, SEEK_END) != 0){
+        printf("Error in get_file_length trying to seek file\n");
+        return -1;;
+    }
+
+    long result = ftell(fd);
+    fclose(fd);
+    return result;
 }
 
 void handle_connection(int socket){
-    char buffer[256];
-    char project_name[256];
-    char arg[256];
+    char buffer[NAME_MAX];
+    char project_name[NAME_MAX];
+    char arg[NAME_MAX];
     bzero(buffer, sizeof(buffer));
     bzero(project_name, sizeof(project_name));
     bzero(arg, sizeof(arg));
@@ -225,7 +421,11 @@ void handle_connection(int socket){
 
 
 int main(int argc, char** argv){
-    
+    if (argc < 2){
+        printf("Failed to provide port number\n");
+        exit(1);
+    }
+
     int socketFD = socket(AF_INET, SOCK_STREAM, 0);
     int clientSocket;
     int length;
@@ -241,6 +441,10 @@ int main(int argc, char** argv){
     bzero((char*)&serverAddress, sizeof(serverAddress));
     serverAddress.sin_family = AF_INET;
     int port = atoi(argv[1]);
+    if (port == 0){
+        printf("atoi failed\n");
+        exit(1);
+    }
     serverAddress.sin_port = htons(port);
     serverAddress.sin_addr.s_addr = INADDR_ANY;
     if (bind(socketFD, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0){
@@ -274,6 +478,7 @@ int main(int argc, char** argv){
     
     chatFunction(clientSocket);
     close(socketFD);
+    
     return 0;
 }
 
