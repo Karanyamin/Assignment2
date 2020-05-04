@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/client",
-            "args": ["remove", "project4", "./project4/garbagf.txt"],
+            "args": ["update", "project4"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

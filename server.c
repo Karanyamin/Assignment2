@@ -365,6 +365,32 @@ void create(char* project_name, int socket){
     close(fd);
 }
 
+void update(char* project, int socket){
+    //Error checking to see if project exists on server
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    write(socket, "sendfile:", 9);
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".Manifest");
+    char* length_of_manifest = int_to_string(get_file_length(path));
+    write(socket, length_of_manifest, strlen(length_of_manifest));
+    if (write_bytes_to_socket(path, socket) == 0){
+        printf("Error in sending manifest to client\n");
+        return;
+    }
+    write(socket, "done:", 6);
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -379,7 +405,8 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             checkout(project_name, socket);
         } else if (strcmp(buffer, "update") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            update(project_name, socket);
         } else if (strcmp(buffer, "upgrade") == 0){
             return;
         } else if (strcmp(buffer, "commit") == 0){
