@@ -257,34 +257,6 @@ int get_number_of_files_in_project(char* project, int* size){
     
     fclose(manifestFD);
     return 1;
-    /*
-    DIR* dir = opendir(path);
-    struct dirent * handle;
-
-    if (dir == NULL){
-        printf("Error opening directory with path name: [%s] in get_number_of_files_in_project\n", path);
-        return 0;
-    }
-
-    while ((handle = readdir(dir)) != NULL){
-        if (!in_ignore_list(handle->d_name)){
-            if (handle->d_type == DT_DIR){
-                append_file_path(path, handle->d_name);
-                if(get_number_of_files_in_project(path, total) == 0){
-                    return 0;
-                }
-                delete_last_file_path(path, handle->d_name);
-            } else if (handle->d_type == DT_REG){
-                append_file_path(path, handle->d_name);
-                printf("Scanning this file %s for counting number of files\n", path);
-                delete_last_file_path(path, handle->d_name);
-                (*total)++;
-            }
-        }
-    }
-    closedir(dir);
-    return 1;
-    */
 }
 
 bool file_exists(char* filename){
@@ -1176,6 +1148,93 @@ void currentversion(char* project, int socket){
     write(socket, "done:", 5);
 }
 
+void delete_higher_rollbacks(char* project, char* version){
+    int version_int = atoi(version);
+    DIR* dir = opendir(".");
+    if (dir == NULL){
+        printf("error opening current direcotry\n");
+        return;
+    }
+    struct dirent * handle;
+
+    while ((handle = readdir(dir)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            char copy[PATH_MAX];
+            strcpy(copy, handle->d_name);
+            char* delim = "_";
+            char* project_name = strtok(copy, delim);
+            char* version_name = strtok(NULL, delim);
+            if (project_name != NULL && version_name != NULL){
+                int version_name_int = atoi(version_name);
+                if (strcmp(project_name, project) == 0 && version_name_int > version_int){
+                    //We found a rollback that is a higher version, delete this
+                    char buffer[PATH_MAX];
+                    strcpy(buffer, ".");
+                    append_file_path(buffer, handle->d_name);
+                    recursively_destory_directory(buffer);
+                    rmdir(buffer);        
+                }
+            }
+        }
+    }
+}
+
+bool perform_rollback(char* project, char* version){
+    DIR* dir = opendir(".");
+    if (dir == NULL){
+        return false;
+    }
+    struct dirent * handle;
+
+    while ((handle = readdir(dir)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            char copy[PATH_MAX];
+            strcpy(copy, handle->d_name);
+            char* delim = "_";
+            char* project_name = strtok(copy, delim);
+            char* version_name = strtok(NULL, delim);
+            if (project_name != NULL && version_name != NULL){
+                if (strcmp(project_name, project) == 0 && strcmp(version_name, version) == 0){
+                    //We found our rollback, delete all other rollbacks that are higher than this and rename this to just the project name
+                    delete_higher_rollbacks(project, version);
+                    char buffer[PATH_MAX];
+                    strcpy(buffer, ".");
+                    append_file_path(buffer, project);
+                    recursively_destory_directory(buffer); //Empty original project;
+                    rmdir(buffer); //Delete origin project;
+                    delete_last_file_path(buffer, project);
+                    append_file_path(buffer, handle->d_name);
+                    rename(buffer, project);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+
+void rollback(char* project, int socket, char* version){
+    //Error check to see if project exists on server
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    //Error checking to see if project exists on server
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    //printf("Version %s\n", version);
+    if (!perform_rollback(project, version)){
+        write(socket, "fail:", 5);
+        return;
+    }
+    write(socket, "done:", 5);
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1213,7 +1272,9 @@ void handle_connection(int socket){
         } else if (strcmp(buffer, "history") == 0){
             return;
         } else if (strcmp(buffer, "rollback") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            read(socket, arg, sizeof(arg));
+            rollback(project_name, socket, arg);
         } else if (strcmp(buffer, "done") == 0){
             break;
         }
