@@ -106,32 +106,33 @@ bool in_ignore_list(char* name){
     
 }
 
-void recursiveBehavior(char* path, void (*fnptr)(char*, int), bool openNewDirectories, int socket){
+int recursively_destory_directory(char* path){
 
     DIR* dir = opendir(path);
     struct dirent * handle;
 
     if (dir == NULL){
         printf("Error opening directory with path name: [%s] in recursive Behavior\n", path);
-        exit(1);
+        return -1;
     }
 
     while ((handle = readdir(dir)) != NULL){
-        if (!in_ignore_list(handle->d_name)){
-            if (handle->d_type == DT_DIR && openNewDirectories){
+        if (strcmp(handle->d_name, ".") != 0 && strcmp(handle->d_name, "..") != 0){
+            if (handle->d_type == DT_DIR){
                 append_file_path(path, handle->d_name);
-                fnptr(path, socket);
-                recursiveBehavior(path, fnptr, openNewDirectories, socket);
+                if (recursively_destory_directory(path) == -1) return -1;
+                if (rmdir(path) == -1) return -1; //Deletes the empty directory
                 delete_last_file_path(path, handle->d_name);
             } else if (handle->d_type == DT_REG){
                 append_file_path(path, handle->d_name);
-                printf("Scanning diles [%s]\n", path);
-                fnptr(path, socket);
+                printf("Deleting files [%s]\n", path);
+                if (remove(path) != 0) return -1;
                 delete_last_file_path(path, handle->d_name);
             }
         }
     }
     closedir(dir);
+    return 0;
 }
 
 int write_bytes_to_socket(char* file, int socket, bool single){
@@ -482,7 +483,9 @@ void commit(char* project, int socket){
             while (read(socket, &c, 1) != 0 && c != ':'){
                 path[n++] = c;
             }
-            strcpy(host, path);
+            strcpy(host, project);
+            strcat(host, "_");
+            strcat(host, path);
         }
         bzero(path, sizeof(path));
         n = 0;
@@ -568,12 +571,27 @@ bool is_IPv4_address(const char* s){
     return true;
 }
 
-void expire_all_other_commits(char* host){
+void expire_all_other_commits(char* host, char* project){
     DIR* dir = opendir(".");
     struct dirent* handle;
 
     while ((handle = readdir(dir)) != NULL){
-        if (is_IPv4_address(handle->d_name) && strcmp(handle->d_name, host) != 0){
+        char buffer[NAME_MAX];
+        strcpy(buffer, handle->d_name);
+        char* delim = "_";
+        char* token = strtok(buffer, delim);
+        char project_temp[NAME_MAX];
+        char host_temp[NAME_MAX];
+        bzero(project_temp , sizeof(project_temp));
+        bzero(host_temp , sizeof(host_temp));
+        if (token != NULL)
+            strcpy(project_temp, token);
+
+        token = strtok(NULL, delim);
+        if (token != NULL)
+            strcpy(host_temp, token);
+        
+        if (is_IPv4_address(host_temp) && strcmp(project_temp, project) == 0 && strcmp(handle->d_name, host) != 0){
             remove(handle->d_name);
         } 
     }
@@ -947,12 +965,9 @@ void push(char* project, int socket){
             while (read(socket, &c, 1) != 0 && c != ':'){
                 path[n++] = c;
             }
-            strcpy(host, path);
-            //Check if server has .Commit for this host
-            if (!file_exists(host)){
-                write(socket, "fail:", 5);
-                break;
-            }
+            strcpy(host, project);
+            strcat(host, "_");
+            strcat(host, path);
             //Check if both .Commits are the same
         
             FILE* clientcommit = fopen(".tempCommit", "w");
@@ -972,12 +987,17 @@ void push(char* project, int socket){
                     fwrite(&c, 1, 1, clientcommit);
                     length--;
                 }
+                //Check if server has commit for host
+                if (!file_exists(host)){
+                    write(socket, "fail:", 5);
+                    return;
+                }
                 //Client commit is now the same as the .Commit on the client, check to see if its the same as the server commit.
                 FILE* localCommit = fopen(host, "r");
                 if (!file_same(clientcommit, localCommit)){
                     //Expire all other commits...meaning delete all other
                     fclose(localCommit);
-                    expire_all_other_commits(host);
+                    expire_all_other_commits(host, project);
                     applyCommit(host, project, socket);
                     remove(host);
                 } else {
@@ -992,6 +1012,53 @@ void push(char* project, int socket){
         bzero(path, sizeof(path));
         n = 0;
     }
+}
+
+void destroy(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    //Error checking to see if project exists on server
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    //Get host information from client
+    char host[NAME_MAX];
+    int n = 0;
+    char c;
+    bzero(path, sizeof(path));
+    while (read(socket, &c, 1) != 0 && c != ':'){
+        path[n++] = c;
+    }
+    if (strcmp(path, "host") == 0){
+        bzero(path, sizeof(path));
+        n = 0;
+        while (read(socket, &c, 1) != 0 && c != ':'){
+            path[n++] = c;
+        }
+    }
+    strcpy(host, project);
+    strcat(host, "_");
+    strcat(host, path);
+    bzero(path, sizeof(path));
+    //expire all pending commits
+    expire_all_other_commits(host, project);
+    //Destory the directory
+    strcpy(path, ".");
+    append_file_path(path, project);
+    if (recursively_destory_directory(path) == -1){
+        write(socket, "fail:", 5);
+        return;
+    }
+    if (rmdir(path) == -1){
+        write(socket, "fail:", 5);
+        return;
+    }
+    write(socket, "success:", 8);
 }
 
 void handle_connection(int socket){
@@ -1023,7 +1090,8 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             create(project_name, socket);
         } else if (strcmp(buffer, "destory") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            destroy(project_name, socket);
         } else if (strcmp(buffer, "currentversion") == 0){
             return;
         } else if (strcmp(buffer, "history") == 0){

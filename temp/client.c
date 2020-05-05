@@ -1334,6 +1334,7 @@ void testpush(int socket, char* project){
             strcpy(buffer, ".");
             append_file_path(buffer, project);
             append_file_path(buffer, ".Commit");
+            write(socket, "done", 5);
             remove(buffer);
             break;
         } else if (strcmp(buffer, "requestfile") == 0){
@@ -1359,6 +1360,46 @@ void testpush(int socket, char* project){
         n = 0;
     }
     fclose(commit);
+}
+
+void testdestroy(int socket, char* project){
+    char buffer[PATH_MAX];
+    read(socket, buffer, sizeof(buffer));
+    //Checks if project in server
+    if (strcmp(buffer, "fail") == 0){
+        printf("failure in finding project on server\n");
+        write(socket, "done", 5);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("success in finding project on server\n");
+    }
+    //Send host information
+    char host[NAME_MAX];
+    bzero(host, sizeof(host));
+    strcpy(host, "host:");
+    strcat(host, getLocalHostIP());
+    strcat(host, ":");
+    write(socket, host, strlen(host));
+
+    int n = 0;
+    char c;
+    bzero(buffer, sizeof(buffer));
+    while (true){
+        while (read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        }
+
+        if (strcmp(buffer, "success") == 0){
+            printf("The server has successfuly destroyed the project\n");
+            break;
+        } else if (strcmp(buffer, "fail") == 0){
+            printf("The server has not successfuly destroyed the project\n");
+            break;
+        }
+        bzero(buffer, sizeof(buffer));
+        n = 0;
+    }
 }
 
 void handle_connection(int socket, char** argv){
@@ -1405,7 +1446,7 @@ void handle_connection(int socket, char** argv){
             testcreate(socket, project_name);
         }
     } else if (strcmp(argv[1], "destory") == 0){
-        return;
+        testdestroy(socket, project_name);
     } else if (strcmp(argv[1], "currentversion") == 0){
         return;
     } else if (strcmp(argv[1], "history") == 0){
