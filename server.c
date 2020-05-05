@@ -131,7 +131,12 @@ void recursiveBehavior(char* path, void (*fnptr)(char*, int), bool openNewDirect
     closedir(dir);
 }
 
-int write_bytes_to_socket(char* file, int socket){
+int write_bytes_to_socket(char* file, int socket, bool single){
+    if (single){
+        write(socket, "sendfile:", 9);
+        char* length_of_file = int_to_string(get_file_length(file));
+        write(socket, length_of_file, strlen(length_of_file));
+    }
     FILE* fp = fopen(file, "r");
     if (fp == NULL){
         printf("error in writing bytes to socket\n");
@@ -173,7 +178,7 @@ int write_bytes_of_all_files(char* path, int socket){
             } else if (handle->d_type == DT_REG){
                 append_file_path(path, handle->d_name);
                 printf("Scanning this file %s for writing bytes to socket\n", path);
-                if (write_bytes_to_socket(path, socket) == 0){
+                if (write_bytes_to_socket(path, socket, false) == 0){
                     return 0;
                 }
                 delete_last_file_path(path, handle->d_name);
@@ -212,6 +217,16 @@ int get_number_of_files_in_project(char* path, int* total){
     }
     closedir(dir);
     return 1;
+}
+
+bool file_exists(char* filename){
+    int fd = open(filename, O_RDWR);
+    if (fd == -1){
+        printf("File %s does not exist\n", filename);
+        return false;
+    }
+    close(fd);
+    return true;
 }
 
 int write_all_files_to_socket_in_sequence(char* path, int socket){
@@ -384,11 +399,116 @@ void update(char* project, int socket){
     append_file_path(path, ".Manifest");
     char* length_of_manifest = int_to_string(get_file_length(path));
     write(socket, length_of_manifest, strlen(length_of_manifest));
-    if (write_bytes_to_socket(path, socket) == 0){
+    if (write_bytes_to_socket(path, socket, false) == 0){
         printf("Error in sending manifest to client\n");
         return;
     }
     write(socket, "done:", 6);
+}
+
+void commit(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".Manifest");
+    if (!project_exists_on_server(project) || !file_exists(path)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    write(socket, "sendfile:", 9);
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".Manifest");
+    char* length_of_manifest = int_to_string(get_file_length(path));
+    write(socket, length_of_manifest, strlen(length_of_manifest));
+    if (write_bytes_to_socket(path, socket, false) == 0){
+        printf("Error in sending manifest to client\n");
+        return;
+    }
+    int n = 0;
+    char c;
+    bzero(path, sizeof(path));
+    char host[PATH_MAX];
+    bzero(host, sizeof(host));
+    while (true){
+        while (read(socket, &c, 1) != 0 && c != ':'){
+            path[n++] = c;
+        }
+        
+        if (strcmp(path, "sendfile") == 0){
+            bzero(path, sizeof(path));
+            FILE* fp = fopen(host, "w");
+
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            long length = strtol(path, NULL, 0);
+            
+            while (length > 0 && read(socket, &c, 1) != 0){
+                fwrite(&c, 1, 1, fp);
+                length--;
+            }
+            write(socket, "success:", 8);
+            fclose(fp);
+        } else if (strcmp(path, "done") == 0){
+            break;
+        } else if (strcmp(path, "host") == 0){
+            bzero(path, sizeof(path));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            strcpy(host, path);
+        }
+        bzero(path, sizeof(path));
+        n = 0;
+    }
+    write(socket, "done:", 5);
+}
+
+void upgrade(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    int n = 0;
+    char c;
+    bzero(path, sizeof(path));
+    while (true){
+        while (read(socket, &c, 1) != 0 && c != ':'){
+            path[n++] = c;
+        }
+        
+        if (strcmp(path, "requestfile") == 0){
+            bzero(path, sizeof(path));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            write_bytes_to_socket(path, socket, true);
+        } else if (strcmp(path, "done") == 0){
+            break;
+        } else if (strcmp(path, "host") == 0){
+            
+        }
+        bzero(path, sizeof(path));
+        n = 0;
+    }
+
 }
 
 void handle_connection(int socket){
@@ -408,9 +528,11 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             update(project_name, socket);
         } else if (strcmp(buffer, "upgrade") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            upgrade(project_name, socket);
         } else if (strcmp(buffer, "commit") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            commit(project_name, socket);
         } else if (strcmp(buffer, "push") == 0){
             return;
         } else if (strcmp(buffer, "create") == 0){

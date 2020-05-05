@@ -15,8 +15,13 @@
 #include <openssl/sha.h>
 #include <limits.h>
 #include <errno.h>
+#include <math.h>
+#include <arpa/inet.h>
 
 long get_file_length(char* file);
+bool is_file_empty(char* file);
+void testadd(char* project, char* filename);
+char* int_to_string(long num, bool delim);
 
 typedef struct node {
     char* filePath;
@@ -135,6 +140,7 @@ bool file_exists(char* filename){
         printf("File %s does not exist\n", filename);
         return false;
     }
+    close(fd);
     return true;
 }
 
@@ -395,6 +401,7 @@ void testcreate(int socket, char* project_name){
 
 void manifest_case_selection(int version, char* project, char* file, char* hash, manifestNode * ptr, FILE* update, FILE* conflict){
     manifestNode * head = ptr; //Only here for redundancy
+    bool found = false;
     while (ptr != NULL){
         if (strcmp(ptr->project, project) == 0 && strcmp(ptr->file, file) == 0){
             if (version != ptr->version || strcmp(ptr->hash, hash) != 0){
@@ -417,6 +424,10 @@ void manifest_case_selection(int version, char* project, char* file, char* hash,
                     printf("%s\n", livehash);
                     strcat(livehash, " ");
                     strcat(livehash, ptr->hash);
+                    strcat(livehash, " ");
+                    char* version_s = int_to_string(ptr->version, false);
+                    strcat(livehash, version_s);
+                    free(version_s);
                     strcat(livehash, "\n");
                     fwrite(livehash, 1, strlen(livehash), update);
                     strcpy(ptr->project, "done");
@@ -437,6 +448,8 @@ void manifest_case_selection(int version, char* project, char* file, char* hash,
                     return;
                 }
             }
+            found = true;
+            strcpy(ptr->project, "done");
         } else if (strlen(project) == 0){ //We reached the end of the client manifest, any nodes in the server linked list without a done as their project name are files not in client manifest.
             while (head != NULL){
                 if (strcmp(head->project, "done") != 0 && strlen(head->file) != 0){
@@ -447,6 +460,10 @@ void manifest_case_selection(int version, char* project, char* file, char* hash,
                     printf("%s\n", buffer);
                     strcat(buffer, " ");
                     strcat(buffer, head->hash);
+                    strcat(buffer, " ");
+                    char* version_s = int_to_string(head->version, false);
+                    strcat(buffer, version_s);
+                    free(version_s);
                     strcat(buffer, "\n");
                     fwrite(buffer, 1, strlen(buffer), update);
                 }
@@ -457,15 +474,121 @@ void manifest_case_selection(int version, char* project, char* file, char* hash,
         ptr = ptr->next;
     }
     //If we searched through the server manifest and did not find the file that means we need to add a D to update
+    if (!found){
+        char buffer[PATH_MAX];
+        bzero(buffer, sizeof(buffer));
+        strcpy(buffer, "D ");
+        strcat(buffer, file);
+        printf("%s\n", buffer);
+        strcat(buffer, " ");
+        strcat(buffer, hash);
+        strcat(buffer, " ");
+        char* version_s = int_to_string(version, false);
+        strcat(buffer, version_s);
+        free(version_s);
+        strcat(buffer, "\n");
+        fwrite(buffer, 1, strlen(buffer), update);
+    }
+}
+
+void get_client_and_server_manifests(manifestNode** serverhead, manifestNode** clienthead, int socket, char* project){
     char buffer[PATH_MAX];
+    char* eptr;
     bzero(buffer, sizeof(buffer));
-    strcpy(buffer, "D ");
-    strcat(buffer, file);
-    printf("%s\n", buffer);
-    strcat(buffer, " ");
-    strcat(buffer, hash);
-    strcat(buffer, "\n");
-    fwrite(buffer, 1, strlen(buffer), update);
+    int n = 0;
+    char c;
+    while(read(socket, &c, 1) != 0 && c != ':'){
+        buffer[n++] = c;
+    }
+    long number_of_bytes_SM = strtol(buffer, &eptr, 0);
+    if (number_of_bytes_SM == 0){
+        printf("Conversion error occurred: %d\n", errno);
+        write(socket, "done", 5);
+        close(socket);
+        exit(1);
+    }
+    bzero(buffer, sizeof(buffer));
+    n = 0;
+    //Will create a Linked list with each line in the server manifest represented as a node
+    while(number_of_bytes_SM > 0 && read(socket, &c, 1) != 0){
+        //printf("%c", c);
+        if (c == '\n'){
+            char projectName[NAME_MAX];
+            char filepath[PATH_MAX];
+            char hash[NAME_MAX];
+            bzero(projectName, sizeof(projectName));
+            bzero(filepath, sizeof(project));
+            bzero(hash, sizeof(project));
+            char delim[2] = " ";
+            char* token = strtok(buffer, delim);
+            int version = atoi(token);
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(projectName, token);
+            }
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(filepath, token);
+            }
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(hash, token);
+            }
+            *serverhead = insert_To_Manifest_List(*serverhead, version, projectName, filepath, hash);
+            bzero(buffer, sizeof(buffer));
+            n = 0;
+        } else {
+            buffer[n++] = c;
+        }
+        number_of_bytes_SM--;
+    }
+    //Will create a linked list same as above but for client manifest now
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    int fd = open(buffer, O_RDONLY);
+    if (fd == -1){
+        printf("error in opening client manifest\n");
+        write(socket, "done", 5);
+        exit(1);
+    }
+    number_of_bytes_SM = get_file_length(buffer);
+    bzero(buffer, sizeof(buffer));
+    n = 0;
+    while(number_of_bytes_SM > 0 && read(fd, &c, 1) != 0){
+        //printf("%c", c);
+        if (c == '\n'){
+            char projectName[NAME_MAX];
+            char filepath[PATH_MAX];
+            char hash[NAME_MAX];
+            bzero(projectName, sizeof(projectName));
+            bzero(filepath, sizeof(project));
+            bzero(hash, sizeof(project));
+            char delim[2] = " ";
+            char* token = strtok(buffer, delim);
+            int version = atoi(token);
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(projectName, token);
+            }
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(filepath, token);
+            }
+            token = strtok(NULL, delim);
+            if (token != NULL){
+                strcpy(hash, token);
+            }
+            *clienthead = insert_To_Manifest_List(*clienthead, version, projectName, filepath, hash);
+            bzero(buffer, sizeof(buffer));
+            n = 0;
+        } else {
+            buffer[n++] = c;
+        }
+        number_of_bytes_SM--;
+    }
+    close(fd);
 }
 
 void testupdate(int socket, char* project){
@@ -492,110 +615,9 @@ void testupdate(int socket, char* project){
         else if (strcmp(buffer, "sendfile") == 0) sendfile = true;
         //printf("%s\n", buffer);
         if (sendfile){
-            //sendFile(socket);
-            char* eptr;
-            bzero(buffer, sizeof(buffer));
-            n = 0;
-            while(read(socket, &c, 1) != 0 && c != ':'){
-                buffer[n++] = c;
-            }
-            long number_of_bytes_SM = strtol(buffer, &eptr, 0);
-            if (number_of_bytes_SM == 0){
-                printf("Conversion error occurred: %d\n", errno);
-                write(socket, "done", 5);
-                close(socket);
-                exit(1);
-            }
-            bzero(buffer, sizeof(buffer));
-            n = 0;
-            //Will create a Linked list with each line in the server manifest represented as a node
-            manifestNode * serverhead = NULL;
-            while(number_of_bytes_SM > 0 && read(socket, &c, 1) != 0){
-                //printf("%c", c);
-                if (c == '\n'){
-                    char projectName[NAME_MAX];
-                    char filepath[PATH_MAX];
-                    char hash[NAME_MAX];
-                    bzero(projectName, sizeof(projectName));
-                    bzero(filepath, sizeof(project));
-                    bzero(hash, sizeof(project));
-                    char delim[2] = " ";
-                    char* token = strtok(buffer, delim);
-                    int version = atoi(token);
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(projectName, token);
-                    }
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(filepath, token);
-                    }
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(hash, token);
-                    }
-                    serverhead = insert_To_Manifest_List(serverhead, version, projectName, filepath, hash);
-                    bzero(buffer, sizeof(buffer));
-                    n = 0;
-                } else {
-                    buffer[n++] = c;
-                }
-                number_of_bytes_SM--;
-            }
-            //Will create a linked list same as above but for client manifest now
-            bzero(buffer, sizeof(buffer));
-            strcpy(buffer, ".");
-            append_file_path(buffer, project);
-            append_file_path(buffer, ".Manifest");
-            int fd = open(buffer, O_RDONLY);
-            if (fd == -1){
-                printf("error in opening client manifest\n");
-                write(socket, "done", 5);
-                exit(1);
-            }
+            manifestNode* serverhead = NULL;
             manifestNode* clienthead = NULL;
-            number_of_bytes_SM = get_file_length(buffer);
-            bzero(buffer, sizeof(buffer));
-            n = 0;
-            while(number_of_bytes_SM > 0 && read(fd, &c, 1) != 0){
-                //printf("%c", c);
-                if (c == '\n'){
-                    char projectName[NAME_MAX];
-                    char filepath[PATH_MAX];
-                    char hash[NAME_MAX];
-                    bzero(projectName, sizeof(projectName));
-                    bzero(filepath, sizeof(project));
-                    bzero(hash, sizeof(project));
-                    char delim[2] = " ";
-                    char* token = strtok(buffer, delim);
-                    int version = atoi(token);
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(projectName, token);
-                    }
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(filepath, token);
-                    }
-                    token = strtok(NULL, delim);
-                    if (token != NULL){
-                        strcpy(hash, token);
-                    }
-                    clienthead = insert_To_Manifest_List(clienthead, version, projectName, filepath, hash);
-                    bzero(buffer, sizeof(buffer));
-                    n = 0;
-                } else {
-                    buffer[n++] = c;
-                }
-                number_of_bytes_SM--;
-            }
-            close(fd);
-            printf("server manifest\n");
-            print_manifest_List(serverhead);
-            printf("client manifest\n");
-            print_manifest_List(clienthead);
-            //Compare both manifest linked lists
-            //Case 1 both manifest versions match
+            get_client_and_server_manifests(&serverhead, &clienthead, socket, project);
             manifestNode * ptr_s = serverhead;
             manifestNode * ptr_c = clienthead;
             while (ptr_s->next != NULL){
@@ -631,12 +653,532 @@ void testupdate(int socket, char* project){
                 }
                 fclose(update);
                 fclose(conflict);
+                if (is_file_empty(buffer)){
+                    remove(buffer);
+                }
             }
             sendfile = false;
         }
         bzero(buffer, sizeof(buffer));
         n = 0;
     }
+}
+
+bool is_file_empty(char* file){ //If file does not exist it will return true
+    FILE* fp = fopen(file, "r+");
+    if (fp == NULL){
+        //File does not exist
+        return true;
+    } else {
+        fseek(fp, 0, SEEK_END);
+        long size = ftell(fp);
+        if (size == 0){
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+
+char* int_to_string(long num, bool delim){ //user must free return char*
+    if (num < 0){
+        printf("Why did you give int_to_string a non positive number?\n");
+        return NULL;
+    } else if (num == 0){
+        if (delim){
+            char* buffer = malloc(sizeof(char) * 3);
+            buffer[0] = '0';
+            buffer[1] = ':';
+            buffer[2] = '\0';
+            return buffer;
+        } else {
+            char* buffer = malloc(sizeof(char) * 2);
+            buffer[0] = '0';
+            buffer[1] = '\0';
+            return buffer;
+        }
+    } else {
+        if (delim){
+            long enough = (long)((ceil(log10(num))+2)*sizeof(char)); //+2 to accomadate for the delimiter and null character
+            char* buffer = malloc(sizeof(char) * enough);
+            sprintf(buffer, "%ld", num);
+            strcat(buffer, ":");
+            return buffer;
+        } else {
+            long enough = (long)((ceil(log10(num))+1)*sizeof(char)); //+1 to accomadate for the null character
+            char* buffer = malloc(sizeof(char) * enough);
+            sprintf(buffer, "%ld", num);
+            return buffer;
+        }
+    }
+}
+
+int write_bytes_to_socket(char* file, int socket, bool single){
+    if (single){
+        write(socket, "sendfile:", 9);
+        char* length_of_file = int_to_string(get_file_length(file), true);
+        write(socket, length_of_file, strlen(length_of_file));
+    }
+    FILE* fp = fopen(file, "r");
+    if (fp == NULL){
+        printf("error in writing bytes to socket\n");
+        return 0;
+    }
+    long size = get_file_length(file);
+    if (size == -1){
+        return 0;
+    } else if (size == 0){
+        fclose(fp);
+        return 1;
+    }
+    char* buffer = (char*)malloc(sizeof(char) * size);
+    fread(buffer, 1, size, fp);
+    write(socket, buffer, size);
+    free(buffer);
+    fclose(fp);
+    return 1;
+}
+
+void delete_line_from_manifest(char* project, char* file, char* hash){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+    FILE* manifestFD = fopen(buffer, "r");
+    char buffercopy[PATH_MAX];
+    strcpy(buffercopy, buffer);
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+    bzero(buffer, sizeof(buffer));
+    fgets(buffer, length, manifestFD); //Throwing away first link
+    strcat(newstream, buffer);
+    if (buffer[strlen(buffer) - 1] != '\n'){
+        strcat(newstream, "\n");
+    }
+    bzero(buffer, sizeof(buffer));
+
+    while (fgets(buffer, length, manifestFD) != NULL){
+        char copy[PATH_MAX];
+        strcpy(copy, buffer);
+        bool p = false, f = false, h = false; //Each bool corresponds to the function parameters
+        char* delim = " \n";
+        char* token = strtok(buffer, delim); //token holds version number
+
+        token = strtok(NULL, delim);
+        if (strcmp(token, project) == 0) p = true;
+        token = strtok(NULL, delim);
+        if (strcmp(token, file) == 0) f = true;
+        token = strtok(NULL, delim);
+        if (strcmp(token, hash) == 0) h = true;
+
+        if (!p || !f || !h){
+            strcat(newstream, copy);
+            if (copy[strlen(copy) - 1] != '\n'){
+                strcat(newstream, "\n");
+            }
+        } 
+    }   
+    
+    FILE* newManifestFD = fopen(buffercopy, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
+}
+
+void increment_version_number(int version, char* project, char* file, char* hash){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    fread(oldstream, 1, length, manifestFD);
+
+    char* token = strtok(oldstream, "\n");
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+    strcat(newstream, token);
+    strcat(newstream, "\n");
+    
+    while((token = strtok(NULL, "\n")) != NULL){
+        if(strstr(token, project) != NULL && strstr(token, file) != NULL){
+            char* version_incremented_s = int_to_string(version, false);
+            strcat(newstream, version_incremented_s);
+            strcat(newstream, " ");
+            strcat(newstream, project);
+            strcat(newstream, " ");
+            strcat(newstream, file);
+            strcat(newstream, " ");
+            strcat(newstream, hash);
+            strcat(newstream, "\n");
+            free(version_incremented_s);
+        } else {
+            strcat(newstream, token);
+            strcat(newstream, "\n");
+        }
+    }
+    FILE* newManifestFD = fopen(buffer, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
+}
+
+void manifest_case_selection_commit(int version, char* project, char* file, char* hash, manifestNode * ptr, FILE* commit, int socket){
+    manifestNode * head = ptr; //Only here for redundancy
+    bool found = false;
+    while (ptr != NULL){
+        if (strcmp(ptr->project, project) == 0 && strcmp(ptr->file, file) == 0){
+            if (strcmp(ptr->hash, hash) == 0){
+                //The live hash needs to match the one stored in client.
+                unsigned char temphash[SHA_DIGEST_LENGTH];
+                char livehash[PATH_MAX];
+                bzero(livehash, sizeof(livehash));
+
+                calculate_and_update_hash(file, temphash);
+                int len = 0;
+                int i;
+                for (i = 0; i < SHA_DIGEST_LENGTH; i++){
+                    len += sprintf(livehash+len, "%02x", temphash[i]);
+                }
+                //compare live hash to hash in client manifest
+                if (strcmp(livehash, hash) != 0){
+                    //Client and server manifest match but live hash is different than client manifest
+                    bzero(livehash, sizeof(livehash));
+                    strcpy(livehash, "M ");
+                    strcat(livehash, file);
+                    printf("%s\n", livehash);
+                    strcat(livehash, " ");
+                    strcat(livehash, ptr->hash);
+                    strcat(livehash, "\n");
+                    fwrite(livehash, 1, strlen(livehash), commit);
+                    increment_version_number(++version, project, file, hash);
+                    strcpy(ptr->project, "done");
+                    return;
+                }
+            } else if(ptr->version >= version){
+                printf("The server file is a higher version but doesn't match client hash, please update\n");
+                write(socket, "done:done", 10);
+                char buffer[PATH_MAX];
+                strcpy(buffer, ".");
+                append_file_path(buffer, project);
+                append_file_path(buffer, ".Commit");
+                remove(buffer);
+                exit(1);
+            }
+            found = true;
+            strcpy(ptr->project, "done");
+        } else if (strlen(project) == 0){ //We reached the end of the client manifest, any nodes in the server linked list without a done as their project name are files not in client manifest.
+            while (head != NULL){
+                if (strcmp(head->project, "done") != 0 && strlen(head->file) != 0){
+                    char buffer[PATH_MAX];
+                    bzero(buffer, sizeof(buffer));
+                    strcpy(buffer, "D ");
+                    strcat(buffer, head->file);
+                    printf("%s\n", buffer);
+                    strcat(buffer, " ");
+                    strcat(buffer, head->hash);
+                    strcat(buffer, "\n");
+                    fwrite(buffer, 1, strlen(buffer), commit);
+                    //I am not incrementing version value because the file DNE on client manifest
+                }
+                head = head->next;
+            }
+            return;
+        }
+        ptr = ptr->next;
+    }
+    //If we searched through the server manifest and did not find the file that means we need to add a D to update
+    if (!found){
+        char buffer[PATH_MAX];
+        bzero(buffer, sizeof(buffer));
+        strcpy(buffer, "A ");
+        strcat(buffer, file);
+        printf("%s\n", buffer);
+        strcat(buffer, " ");
+        strcat(buffer, hash); //Is this suppose to be the server hash or the client hash?
+        strcat(buffer, "\n");
+        fwrite(buffer, 1, strlen(buffer), commit);
+        increment_version_number(++version, project, file, hash);
+    }
+}
+
+void check_host_name(int hostname) { 
+   if (hostname == -1) {
+      perror("gethostname");
+      exit(1);
+   }
+}
+void check_host_entry(struct hostent * hostentry) { 
+   if (hostentry == NULL) {
+      perror("gethostbyname");
+      exit(1);
+   }
+}
+void IP_formatter(char *IPbuffer) { 
+   if (NULL == IPbuffer) {
+      perror("inet_ntoa");
+      exit(1);
+   }
+}
+
+char* getLocalHostIP(){
+    char host[256];
+    char *IP;
+    struct hostent *host_entry;
+    int hostname;
+    hostname = gethostname(host, sizeof(host));
+    check_host_name(hostname);
+    host_entry = gethostbyname(host); 
+    check_host_entry(host_entry);
+    IP = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
+    //Convert into IP string
+    return IP;
+}
+
+
+void testcommit(int socket, char* project){
+    //Error checking
+    char buffer[PATH_MAX];
+    char c;
+    int n = 0;
+    bzero(buffer, sizeof(buffer));
+    read(socket, buffer, sizeof(buffer));
+    if (strcmp(buffer, "fail") == 0){
+        printf("failure in finding project or project manifest on server\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("success in finding project on server\n");
+    }
+    //Error checking for client manifest 
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    if (!file_exists(buffer)){
+        printf("no manifest on client\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    }
+    delete_last_file_path(buffer, ".Manifest");
+    append_file_path(buffer, ".Update");
+    //Error check to see if there is a non-empty .Update file
+    if (!is_file_empty(buffer)){
+        printf("non-empty .Update file in client\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    }
+    delete_last_file_path(buffer, ".Update");
+    append_file_path(buffer, ".Conflict");
+    if(file_exists(buffer)){
+        printf("Client has .Conflict file\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    }
+    bool sendfile = false;
+    bzero(buffer, sizeof(buffer));
+    while (true){
+        while(read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        } 
+        if (strcmp(buffer, "done") == 0) break;
+        else if (strcmp(buffer, "sendfile") == 0) {
+            manifestNode* server = NULL;
+            manifestNode* client = NULL;
+            get_client_and_server_manifests(&server, &client, socket, project);
+            //See if the client and server manifest versions match
+            printf("server\n");
+            print_manifest_List(server);
+            printf("client\n");
+            print_manifest_List(client);
+            manifestNode* ptr_s = server;
+            manifestNode* ptr_c = client;
+            while (ptr_s->next != NULL){
+                ptr_s = ptr_s->next;
+            }
+            while (ptr_c->next != NULL){
+                ptr_c = ptr_c->next;
+            }
+            if (ptr_c->version != ptr_s->version){
+                //Since the versions don't match we can tell the client to update
+                printf("The client and server manifest verisons do not match, please run update\n");
+                write(socket, "done:done", 9);
+                close(socket);
+                exit(1);
+            }
+            ptr_c = client;
+            bzero(buffer, sizeof(buffer));
+            strcpy(buffer, ".");
+            append_file_path(buffer, project);
+            append_file_path(buffer, ".Commit");
+            FILE* commit = fopen(buffer, "w");
+            /*
+            delete_last_file_path(buffer, ".Commit");
+            append_file_path(buffer, ".Conflict");
+            FILE* conflict = fopen(buffer, "w");
+            */
+            while (ptr_c != NULL){
+                manifest_case_selection_commit(ptr_c->version, ptr_c->project, ptr_c->file, ptr_c->hash, server, commit, socket);
+                ptr_c = ptr_c->next;
+            }
+            fclose(commit);
+            char host[PATH_MAX];
+            bzero(host, sizeof(host));
+            strcpy(host, "host:");
+            strcat(host, getLocalHostIP());
+            strcat(host, ":");
+            write(socket, host, strlen(host));
+            write_bytes_to_socket(buffer, socket, true);
+            write(socket, "done:", 5);
+        } else if (strcmp(buffer, "success") == 0){
+            printf("Server successfully saved the active commit\n");
+        }
+
+        bzero(buffer, sizeof(buffer));
+        n = 0;
+    }
+
+
+}
+
+void testupgrade(int socket, char* project){
+    //Error checking
+    char buffer[PATH_MAX];
+    read(socket, buffer, sizeof(buffer));
+    //Checks if project in server
+    if (strcmp(buffer, "fail") == 0){
+        printf("failure in finding project on server\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("success in finding project on server\n");
+    }
+    //Checks if .Update file exists
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Conflict");
+    if (file_exists(buffer)){
+        printf("Conflict file exists in client\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    }
+    //Checks if .Conflict file exists
+    delete_last_file_path(buffer, ".Conflict");
+    append_file_path(buffer, ".Update");
+
+    FILE* update = fopen(buffer, "r");
+    if (update == NULL){
+        printf("No .Update file in client\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1); 
+    }
+    long length = get_file_length(buffer);
+    if (length == 0){
+        printf("The .Update file is empty and the project is Up to Date\n");
+        remove(buffer);
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1); 
+    }
+    bzero(buffer, sizeof(buffer));
+    while (fgets(buffer, length, update) != NULL){
+        char* delim = " \n";
+        char* token = strtok(buffer, delim);
+        //Adds M, A, or D
+        char mode = token[0];
+        //Adds the filepath
+        token = strtok(NULL, delim);
+        char filepath[PATH_MAX];
+        strcpy(filepath, token);
+        //Adds the hash
+        token = strtok(NULL, delim);
+        char hash[PATH_MAX];
+        strcpy(hash, token);
+        token = strtok(NULL, delim);
+        char version_s[PATH_MAX];
+        strcpy(version_s, token);
+
+        if (mode == 'A' || mode == 'M'){
+            char sendrequest[PATH_MAX];
+            strcpy(sendrequest, "requestfile:");
+            strcat(sendrequest, filepath);
+            strcat(sendrequest, ":");
+            write(socket, sendrequest, strlen(sendrequest));
+            bzero(sendrequest, sizeof(buffer));
+            char c;
+            int n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                sendrequest[n++] = c;
+            }
+            if (strcmp(sendrequest, "sendfile") == 0){
+                bzero(sendrequest, sizeof(buffer));
+                n = 0;
+                while (read(socket, &c, 1) != 0 && c != ':'){
+                    sendrequest[n++] = c;
+                }
+                long file_size = strtol(sendrequest, NULL, 0);
+                FILE* add = fopen(filepath, "w");
+                if (add == NULL){
+                    printf("something went wrong with opening adding file %s\n");
+                    write(socket, "done:done", 9);
+                    close(socket);
+                    exit(1);
+                }
+                while (file_size > 0 && read(socket, &c, 1) != 0){
+                    fwrite(&c, 1, 1, add);
+                    file_size--;
+                }
+                fclose(add);
+            }
+            if (mode == 'A'){
+                testadd(project, filepath);
+            }
+            int version = atoi(version_s);
+            increment_version_number(version, project, filepath, hash);
+        } else if (mode == 'D'){
+            delete_line_from_manifest(project, filepath, hash);
+        } 
+        bzero(buffer, sizeof(buffer));
+    }
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Update");
+    remove(buffer);
+    write(socket, "done:", 5);
 }
 
 void handle_connection(int socket, char** argv){
@@ -661,9 +1203,13 @@ void handle_connection(int socket, char** argv){
             testupdate(socket, project_name);
         }
     } else if (strcmp(argv[1], "upgrade") == 0){
-        return;
+        if (project_exists_on_client(argv[2])){
+            testupgrade(socket, project_name);
+        }
     } else if (strcmp(argv[1], "commit") == 0){
-        return;
+        if (project_exists_on_client(argv[2])){
+            testcommit(socket, project_name);
+        }
     } else if (strcmp(argv[1], "push") == 0){
         return;
     } else if (strcmp(argv[1], "create") == 0){
@@ -753,8 +1299,8 @@ void testremove(char* project, char* file){
     append_file_path(buffer, ".Manifest");
     if (file_exists(buffer)){
         long length = get_file_length(buffer);
-        char* oldstream = malloc(sizeof(char) * length);
-        bzero(oldstream, sizeof(char) * length);
+        char* oldstream = malloc(sizeof(char) * (length+1));
+        bzero(oldstream, sizeof(char) * (length+1));
         FILE* manifestFD = fopen(buffer, "r");
         if (manifestFD == NULL){
             printf("error in opening manifest\n");
@@ -762,8 +1308,8 @@ void testremove(char* project, char* file){
         }
         fread(oldstream, 1, length, manifestFD);
         char* token = strtok(oldstream, "\n");
-        char* newstream = malloc(sizeof(char) * length);
-        bzero(newstream, sizeof(char) * length);
+        char* newstream = malloc(sizeof(char) * (length+1));
+        bzero(newstream, sizeof(char) * (length+1));
         strcat(newstream, token);
         strcat(newstream, "\n");
         
