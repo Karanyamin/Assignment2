@@ -19,6 +19,46 @@
 long get_file_length(char* file);
 char* int_to_string(long num, bool delim);
 bool is_IPv4_address(const char* s);
+void append_file_path(char* path, char* nextDirectoryName);
+void delete_last_file_path(char* path, char* nextDirectoryName);
+
+bool included_in_manifest(char* project, char* file){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    if (strcmp(file, buffer) == 0) return true;
+    long length = get_file_length(buffer);
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return false;
+    }
+   
+    bzero(buffer, sizeof(buffer));
+    fgets(buffer, length, manifestFD); //Throwing away first link
+    bzero(buffer, sizeof(buffer));
+
+    while (fgets(buffer, length, manifestFD) != NULL){
+        bool p = false, f = false; //Each bool corresponds to the function parameters
+        char* delim = " \n";
+        char* token = strtok(buffer, delim); //token holds version number
+
+        token = strtok(NULL, delim); //token holds project name
+        if (strcmp(token, project) == 0) p = true;
+        token = strtok(NULL, delim); //token golds project filepath
+        if (strcmp(token, file) == 0) f = true;
+
+        if (p && f){
+            return true;
+        } 
+    }   
+    
+    fclose(manifestFD);
+    return false;
+}
+
 
 void calculate_and_update_hash(char* filepath, unsigned char* hash){ //Hash must be of Length SHA_DIGEST_LENGTH
     //unsigned char* hash = malloc(sizeof(char) * SHA_DIGEST_LENGTH);
@@ -161,7 +201,7 @@ int write_bytes_to_socket(char* file, int socket, bool single){
     return 1;
 }
 
-int write_bytes_of_all_files(char* path, int socket){
+int write_bytes_of_all_files(char* path, int socket, char* project){
 
     DIR* dir = opendir(path);
     struct dirent * handle;
@@ -175,16 +215,19 @@ int write_bytes_of_all_files(char* path, int socket){
         if (!in_ignore_list(handle->d_name)){
             if (handle->d_type == DT_DIR){
                 append_file_path(path, handle->d_name);
-                if (write_bytes_of_all_files(path, socket) == 0){
+                if (write_bytes_of_all_files(path, socket, project) == 0){
                     return 0;
                 }
                 delete_last_file_path(path, handle->d_name);
             } else if (handle->d_type == DT_REG){
                 append_file_path(path, handle->d_name);
-                printf("Scanning this file %s for writing bytes to socket\n", path);
-                if (write_bytes_to_socket(path, socket, false) == 0){
-                    return 0;
+                if (included_in_manifest(project, path)){
+                    printf("Scanning this file %s for writing bytes to socket\n", path);
+                    if (write_bytes_to_socket(path, socket, false) == 0){
+                        return 0;
+                    }
                 }
+                
                 delete_last_file_path(path, handle->d_name);
             }
         }
@@ -193,8 +236,28 @@ int write_bytes_of_all_files(char* path, int socket){
     return 1;
 }
 
-int get_number_of_files_in_project(char* path, int* total){
+int get_number_of_files_in_project(char* project, int* size){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    long length = get_file_length(buffer);
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return 0;
+    }
+   
+    bzero(buffer, sizeof(buffer));
 
+    while (fgets(buffer, length, manifestFD) != NULL){
+        (*size)++;
+    }   
+    
+    fclose(manifestFD);
+    return 1;
+    /*
     DIR* dir = opendir(path);
     struct dirent * handle;
 
@@ -221,6 +284,7 @@ int get_number_of_files_in_project(char* path, int* total){
     }
     closedir(dir);
     return 1;
+    */
 }
 
 bool file_exists(char* filename){
@@ -233,7 +297,7 @@ bool file_exists(char* filename){
     return true;
 }
 
-int write_all_files_to_socket_in_sequence(char* path, int socket){
+int write_all_files_to_socket_in_sequence(char* path, int socket, char* project){
 
     DIR* dir = opendir(path);
     struct dirent * handle;
@@ -247,22 +311,24 @@ int write_all_files_to_socket_in_sequence(char* path, int socket){
         if (!in_ignore_list(handle->d_name)){
             if (handle->d_type == DT_DIR){
                 append_file_path(path, handle->d_name);
-                if (write_all_files_to_socket_in_sequence(path, socket) == 0){
+                if (write_all_files_to_socket_in_sequence(path, socket, project) == 0){
                     return 0;
                 }
                 delete_last_file_path(path, handle->d_name);
             } else if (handle->d_type == DT_REG){
                 append_file_path(path, handle->d_name);
-                printf("Scanning this file %s for appending file to socket\n", path);
-                char* length_of_file = int_to_string(strlen(path), true);
-                if (length_of_file == NULL) return 0;
-                write(socket, length_of_file, strlen(length_of_file));
-                write(socket, path, strlen(path));
-                char* bytes_in_file = int_to_string(get_file_length(path), true);
-                if (bytes_in_file == NULL) return 0;
-                write(socket, bytes_in_file, strlen(bytes_in_file));
-                free(length_of_file);
-                free(bytes_in_file);
+                if (included_in_manifest(project, path)){
+                    printf("Scanning this file %s for appending file to socket\n", path);
+                    char* length_of_file = int_to_string(strlen(path), true);
+                    if (length_of_file == NULL) return 0;
+                    write(socket, length_of_file, strlen(length_of_file));
+                    write(socket, path, strlen(path));
+                    char* bytes_in_file = int_to_string(get_file_length(path), true);
+                    if (bytes_in_file == NULL) return 0;
+                    write(socket, bytes_in_file, strlen(bytes_in_file));
+                    free(length_of_file);
+                    free(bytes_in_file);
+                }
                 delete_last_file_path(path, handle->d_name);
             }
         }
@@ -328,7 +394,7 @@ void checkout(char* project, int socket){
     bzero(path, sizeof(path));
     strcpy(path, "./");
     strcat(path, project);
-    if(get_number_of_files_in_project(path, &number_of_files) == 0){
+    if(get_number_of_files_in_project(project, &number_of_files) == 0){
         printf("Error in getting number of files in project\n");
         return;
     }
@@ -340,7 +406,7 @@ void checkout(char* project, int socket){
     bzero(path, sizeof(path));
     strcpy(path, "./");
     strcat(path, project);
-    if(write_all_files_to_socket_in_sequence(path, socket) == 0){
+    if(write_all_files_to_socket_in_sequence(path, socket, project) == 0){
         printf("Error in writing all filepath names to socket\n");
         return;
     }
@@ -348,7 +414,7 @@ void checkout(char* project, int socket){
     bzero(path, sizeof(path));
     strcpy(path, "./");
     strcat(path, project);
-    write_bytes_of_all_files(path, socket);
+    write_bytes_of_all_files(path, socket, project);
     write(socket, ":done:", 7);
     
 }
