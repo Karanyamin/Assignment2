@@ -1061,6 +1061,55 @@ void destroy(char* project, int socket){
     write(socket, "success:", 8);
 }
 
+void currentversion(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    //Error checking to see if project exists on server
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+
+    //Open the manifest and feed into client
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".Manifest");
+    long length = get_file_length(path);
+    FILE* mani = fopen(path, "r");
+    if (mani == NULL){
+        //No manifest
+        write(socket, "fail:", 5);
+        return;
+    }
+    bzero(path, sizeof(path));
+    strcpy(path, "List of files under project ");
+    strcat(path, project);
+    strcat(path, "\n:");
+    write(socket, path, strlen(path));
+    bzero(path, sizeof(path));
+    fgets(path, length, mani); // To throw away the first line in the manifest
+    bzero(path, sizeof(path));
+    while (fgets(path, length, mani) != NULL){
+        char buffer[PATH_MAX];
+        strcpy(buffer, "File Version = [");
+        char* delim = " ";
+        char* token = strtok(path, delim);
+        strcat(buffer, token);
+        strcat(buffer, "], File path = [");
+        token = strtok(NULL, delim); //Throw away the project info
+        token = strtok(NULL, delim);
+        strcat(buffer, token);
+        strcat(buffer, "]\n:");
+        write(socket, buffer, strlen(buffer));
+    }
+    write(socket, "done:", 5);
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1093,7 +1142,8 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             destroy(project_name, socket);
         } else if (strcmp(buffer, "currentversion") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            currentversion(project_name, socket);
         } else if (strcmp(buffer, "history") == 0){
             return;
         } else if (strcmp(buffer, "rollback") == 0){
