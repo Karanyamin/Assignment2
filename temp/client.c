@@ -1330,6 +1330,11 @@ void testpush(int socket, char* project){
         if (strcmp(buffer, "done") == 0) break;
         else if (strcmp(buffer, "fail") == 0) {
             printf("Server failed\n");
+            bzero(buffer, sizeof(buffer));
+            strcpy(buffer, ".");
+            append_file_path(buffer, project);
+            append_file_path(buffer, ".Commit");
+            remove(buffer);
             break;
         } else if (strcmp(buffer, "requestfile") == 0){
             bzero(buffer, sizeof(buffer));
@@ -1339,6 +1344,15 @@ void testpush(int socket, char* project){
             }
             //buffer holds the name of the file we need to send
             write_bytes_to_socket(buffer, socket, true); //sends the current version of the file
+        } else if (strcmp(buffer, "success") == 0){
+            //We can delete our local .Commit file
+            printf("server succeeded\n");
+            bzero(buffer, sizeof(buffer));
+            strcpy(buffer, ".");
+            append_file_path(buffer, project);
+            append_file_path(buffer, ".Commit");
+            remove(buffer);
+            break;
         }
 
         bzero(buffer, sizeof(buffer));

@@ -909,7 +909,6 @@ void applyCommit(char* commit, char* project, int socket){
             delete_line_from_manifest(project, filepath, hash);
         }
     }
-    remove(commit);
 }
 
 void push(char* project, int socket){
@@ -977,14 +976,17 @@ void push(char* project, int socket){
                 FILE* localCommit = fopen(host, "r");
                 if (!file_same(clientcommit, localCommit)){
                     //Expire all other commits...meaning delete all other
-                    remove(".tempCommit");
+                    fclose(localCommit);
                     expire_all_other_commits(host);
                     applyCommit(host, project, socket);
+                    remove(host);
+                } else {
                     fclose(localCommit);
                 }
-                write(socket, "done:", 5);
+                write(socket, "success:", 8);
             }
             fclose(clientcommit);
+            remove(".tempCommit");
             break;
         }
         bzero(path, sizeof(path));
