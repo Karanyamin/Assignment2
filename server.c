@@ -17,7 +17,8 @@
 #include <math.h>
 
 long get_file_length(char* file);
-char* int_to_string(long num);
+char* int_to_string(long num, bool delim);
+bool is_IPv4_address(const char* s);
 
 void calculate_and_update_hash(char* filepath, unsigned char* hash){ //Hash must be of Length SHA_DIGEST_LENGTH
     //unsigned char* hash = malloc(sizeof(char) * SHA_DIGEST_LENGTH);
@@ -97,6 +98,8 @@ bool in_ignore_list(char* name){
         return true;
     } else if (strcmp(name, "..") == 0){
         return true; 
+    } else if (is_IPv4_address(name)){
+        return true;
     } else {
         return false;
     }
@@ -134,7 +137,7 @@ void recursiveBehavior(char* path, void (*fnptr)(char*, int), bool openNewDirect
 int write_bytes_to_socket(char* file, int socket, bool single){
     if (single){
         write(socket, "sendfile:", 9);
-        char* length_of_file = int_to_string(get_file_length(file));
+        char* length_of_file = int_to_string(get_file_length(file), true);
         write(socket, length_of_file, strlen(length_of_file));
     }
     FILE* fp = fopen(file, "r");
@@ -250,11 +253,11 @@ int write_all_files_to_socket_in_sequence(char* path, int socket){
             } else if (handle->d_type == DT_REG){
                 append_file_path(path, handle->d_name);
                 printf("Scanning this file %s for appending file to socket\n", path);
-                char* length_of_file = int_to_string(strlen(path));
+                char* length_of_file = int_to_string(strlen(path), true);
                 if (length_of_file == NULL) return 0;
                 write(socket, length_of_file, strlen(length_of_file));
                 write(socket, path, strlen(path));
-                char* bytes_in_file = int_to_string(get_file_length(path));
+                char* bytes_in_file = int_to_string(get_file_length(path), true);
                 if (bytes_in_file == NULL) return 0;
                 write(socket, bytes_in_file, strlen(bytes_in_file));
                 free(length_of_file);
@@ -272,22 +275,36 @@ void checkout_write_filepath_to_socket(char* path, int socket){
     write(socket,"|", 1);
 }
 
-char* int_to_string(long num){ //user must free return char*
+char* int_to_string(long num, bool delim){ //user must free return char*
     if (num < 0){
         printf("Why did you give int_to_string a non positive number?\n");
         return NULL;
     } else if (num == 0){
-        char* buffer = malloc(sizeof(char) * 3);
-        buffer[0] = '0';
-        buffer[1] = ':';
-        buffer[2] = '\0';
-        return buffer;
+        if (delim){
+            char* buffer = malloc(sizeof(char) * 3);
+            buffer[0] = '0';
+            buffer[1] = ':';
+            buffer[2] = '\0';
+            return buffer;
+        } else {
+            char* buffer = malloc(sizeof(char) * 2);
+            buffer[0] = '0';
+            buffer[1] = '\0';
+            return buffer;
+        }
     } else {
-        long enough = (long)((ceil(log10(num))+2)*sizeof(char)); //+2 to accomadate for the delimiter and null character
-        char* buffer = malloc(sizeof(char) * enough);
-        sprintf(buffer, "%ld", num);
-        strcat(buffer, ":");
-        return buffer;
+        if (delim){
+            long enough = (long)((ceil(log10(num))+2)*sizeof(char)); //+2 to accomadate for the delimiter and null character
+            char* buffer = malloc(sizeof(char) * enough);
+            sprintf(buffer, "%ld", num);
+            strcat(buffer, ":");
+            return buffer;
+        } else {
+            long enough = (long)((ceil(log10(num))+1)*sizeof(char)); //+1 to accomadate for the null character
+            char* buffer = malloc(sizeof(char) * enough);
+            sprintf(buffer, "%ld", num);
+            return buffer;
+        }
     }
 }
 
@@ -314,7 +331,7 @@ void checkout(char* project, int socket){
         printf("Error in getting number of files in project\n");
         return;
     }
-    char* number_of_files_s = int_to_string(number_of_files);
+    char* number_of_files_s = int_to_string(number_of_files, true);
     if (number_of_files_s == NULL) return;
     write(socket, number_of_files_s, strlen(number_of_files_s));
     free(number_of_files_s);
@@ -397,7 +414,7 @@ void update(char* project, int socket){
     strcpy(path, ".");
     append_file_path(path, project);
     append_file_path(path, ".Manifest");
-    char* length_of_manifest = int_to_string(get_file_length(path));
+    char* length_of_manifest = int_to_string(get_file_length(path), true);
     write(socket, length_of_manifest, strlen(length_of_manifest));
     if (write_bytes_to_socket(path, socket, false) == 0){
         printf("Error in sending manifest to client\n");
@@ -425,7 +442,7 @@ void commit(char* project, int socket){
     strcpy(path, ".");
     append_file_path(path, project);
     append_file_path(path, ".Manifest");
-    char* length_of_manifest = int_to_string(get_file_length(path));
+    char* length_of_manifest = int_to_string(get_file_length(path), true);
     write(socket, length_of_manifest, strlen(length_of_manifest));
     if (write_bytes_to_socket(path, socket, false) == 0){
         printf("Error in sending manifest to client\n");
@@ -511,6 +528,470 @@ void upgrade(char* project, int socket){
 
 }
 
+bool file_same(FILE* a, FILE* b){
+    char c, d;
+    do {
+        c = fgetc(a);
+        d = fgetc(b);
+
+        if (c != d) return false;
+
+    } while (c != EOF && d != EOF);
+
+    if (c == EOF && d == EOF){ //If both files eached the end and every char was the same, return true. If one file is longer return false
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool is_IPv4_address(const char* s){
+    int len = strlen(s);
+
+    if (len < 7 || len > 15)
+        return false;
+
+    char tail[16];
+    tail[0] = 0;
+
+    unsigned int d[4];
+    int c = sscanf(s, "%3u.%3u.%3u.%3u%s", &d[0], &d[1], &d[2], &d[3], tail);
+
+    if (c != 4 || tail[0])
+        return false;
+
+    int i;
+    for (i = 0; i < 4; i++)
+        if (d[i] > 255)
+            return false;
+
+    return true;
+}
+
+void expire_all_other_commits(char* host){
+    DIR* dir = opendir(".");
+    struct dirent* handle;
+
+    while ((handle = readdir(dir)) != NULL){
+        if (is_IPv4_address(handle->d_name) && strcmp(handle->d_name, host) != 0){
+            remove(handle->d_name);
+        } 
+    }
+    closedir(dir);
+}
+
+void duplicate(char* a, char* b){
+    FILE* old = fopen(a, "r");
+    FILE* new = fopen(b, "w");
+
+    char c;
+    while ((c = fgetc(old)) != EOF){
+        fputc(c, new);
+    }
+    fclose(old);
+    fclose(new);
+}
+
+void recursive_duplicateDirectory(char* dirpath_a, char* dirpath_b){
+    DIR* dir_a = opendir(dirpath_a);
+    DIR* dir_b = opendir(dirpath_b);
+    struct dirent * handle;
+
+    if (dir_a == NULL || dir_b == NULL){
+        printf("Error opening directory with path name: [%s] in recursive Behavior\n", dir_a);
+        exit(1);
+    }
+
+    while ((handle = readdir(dir_a)) != NULL){
+        if (!in_ignore_list(handle->d_name)){
+            if (handle->d_type == DT_DIR){
+                append_file_path(dirpath_a, handle->d_name);
+                append_file_path(dirpath_b, handle->d_name);
+                mkdir(dirpath_b, 0777);
+                recursive_duplicateDirectory(dirpath_a, dirpath_b);
+                delete_last_file_path(dirpath_a, handle->d_name);
+                delete_last_file_path(dirpath_b, handle->d_name);
+            } else if (handle->d_type == DT_REG){
+                append_file_path(dirpath_a, handle->d_name);
+                append_file_path(dirpath_b, handle->d_name);
+                printf("Duplicating files [%s]\n", dirpath_a);
+                duplicate(dirpath_a, dirpath_b);
+                delete_last_file_path(dirpath_a, handle->d_name);
+                delete_last_file_path(dirpath_b, handle->d_name);
+            }
+        }
+    }
+    closedir(dir_a);
+    closedir(dir_b);
+}
+
+void update_manifest_version(char* project, char* newversion){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    fread(oldstream, 1, length, manifestFD);
+
+    char* token = strtok(oldstream, "\n");
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+
+    strcat(newstream, newversion);
+    strcat(newstream, "\n");
+
+    while((token = strtok(NULL, "\n")) != NULL){
+        strcat(newstream, token);
+        strcat(newstream, "\n");
+    }
+    FILE* newManifestFD = fopen(buffer, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
+}
+
+void delete_line_from_manifest(char* project, char* file, char* hash){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+    FILE* manifestFD = fopen(buffer, "r");
+    char buffercopy[PATH_MAX];
+    strcpy(buffercopy, buffer);
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+    bzero(buffer, sizeof(buffer));
+    fgets(buffer, length, manifestFD); //Throwing away first link
+    strcat(newstream, buffer);
+    if (buffer[strlen(buffer) - 1] != '\n'){
+        strcat(newstream, "\n");
+    }
+    bzero(buffer, sizeof(buffer));
+
+    while (fgets(buffer, length, manifestFD) != NULL){
+        char copy[PATH_MAX];
+        strcpy(copy, buffer);
+        bool p = false, f = false, h = false; //Each bool corresponds to the function parameters
+        char* delim = " \n";
+        char* token = strtok(buffer, delim); //token holds version number
+
+        token = strtok(NULL, delim);
+        if (strcmp(token, project) == 0) p = true;
+        token = strtok(NULL, delim);
+        if (strcmp(token, file) == 0) f = true;
+        token = strtok(NULL, delim);
+        if (strcmp(token, hash) == 0) h = true;
+
+        if (!p || !f || !h){
+            strcat(newstream, copy);
+            if (copy[strlen(copy) - 1] != '\n'){
+                strcat(newstream, "\n");
+            }
+        } 
+    }   
+    
+    FILE* newManifestFD = fopen(buffercopy, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
+}
+
+void increment_version_number(int version, char* project, char* file, char* hash){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    fread(oldstream, 1, length, manifestFD);
+
+    char* token = strtok(oldstream, "\n");
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+    strcat(newstream, token);
+    strcat(newstream, "\n");
+    
+    while((token = strtok(NULL, "\n")) != NULL){
+        if(strstr(token, project) != NULL && strstr(token, file) != NULL){
+            char* version_incremented_s = int_to_string(version, false);
+            strcat(newstream, version_incremented_s);
+            strcat(newstream, " ");
+            strcat(newstream, project);
+            strcat(newstream, " ");
+            strcat(newstream, file);
+            strcat(newstream, " ");
+            strcat(newstream, hash);
+            strcat(newstream, "\n");
+            free(version_incremented_s);
+        } else {
+            strcat(newstream, token);
+            strcat(newstream, "\n");
+        }
+    }
+    FILE* newManifestFD = fopen(buffer, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
+}
+
+void testadd(char* project, char* filename){
+    //Error checking
+    if (!project_exists_on_server(project)){
+        printf("Project does not exist on server\n");
+        return;
+    }
+    //Check if file and Manifest exists
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    if (file_exists(filename) && file_exists(buffer)){
+        //Create hash for file
+        unsigned char hash[SHA_DIGEST_LENGTH];
+        bzero(hash, sizeof(hash));
+        calculate_and_update_hash(filename, hash);
+        //Add file to manifest
+        FILE* fp = fopen(buffer, "a");
+        bzero(buffer, sizeof(buffer));
+        strcat(buffer, "1 ");
+        strcat(buffer, project);
+        strcat(buffer, " ");
+        strcat(buffer, filename);
+        strcat(buffer, " ");
+        int len = strlen(buffer);
+        int i;
+        for (i = 0; i < SHA_DIGEST_LENGTH; i++){
+            len += sprintf(buffer+len, "%02x", hash[i]);
+        }
+        //strcat(buffer, hash);
+        strcat(buffer, "\n");
+        fprintf(fp, buffer);
+        fclose(fp);
+    }
+}
+
+
+void applyCommit(char* commit, char* project, int socket){
+
+    //Create a copy directory with the old manifest version appened to its name
+    char buffer[PATH_MAX];
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+    FILE* manifest = fopen(buffer, "r");
+    long length_of_old_manifest = get_file_length(buffer);
+    bzero(buffer, sizeof(buffer));
+    //Insert first line of server manifest into buffer
+    fgets(buffer, length_of_old_manifest, manifest);
+    char* delim = "\n";
+    char* token = strtok(buffer, delim);
+    //token now holds the old manifest version
+    char old_project[PATH_MAX];
+    strcpy(old_project, ".");
+    append_file_path(old_project, project);
+    strcat(old_project, "_");
+    strcat(old_project, token);
+    //old _project is the name of the project with the old version number attached to it.
+    mkdir(old_project, 0777);
+    rewind(manifest);
+    //Now we have project and empty project_<oldversion>, now we need to recursively through project and copy every file into project_<oldversion>
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    recursive_duplicateDirectory(buffer, old_project);
+    //Now that the project is duplicated, apply the changes to the project
+    bzero(buffer, sizeof(buffer));
+    long length_of_commit = get_file_length(commit);
+    FILE* commitfd = fopen(commit, "r");
+    fgets(buffer, length_of_commit, commitfd);
+    char* delim_special = "\n";
+    char* token_special = strtok(buffer, delim_special);
+    update_manifest_version(project, token_special);
+    bzero(buffer, sizeof(buffer));
+    //The manifest now has the same version as the .Commit file indicated
+    while (fgets(buffer, length_of_commit, commitfd) != NULL){
+        char* delim = " \n";
+        char* token = strtok(buffer, delim);
+        //Adds M, A, or D
+        char mode = token[0];
+        //Adds the filepath
+        token = strtok(NULL, delim);
+        char filepath[PATH_MAX];
+        strcpy(filepath, token);
+        //Adds the hash
+        token = strtok(NULL, delim);
+        char hash[PATH_MAX];
+        strcpy(hash, token);
+        //Adds the new version
+        token = strtok(NULL, delim);
+        char version_s[PATH_MAX];
+        strcpy(version_s, token);
+
+        if (mode == 'A' || mode == 'M'){
+            char sendrequest[PATH_MAX];
+            strcpy(sendrequest, "requestfile:");
+            strcat(sendrequest, filepath);
+            strcat(sendrequest, ":");
+            write(socket, sendrequest, strlen(sendrequest));
+            bzero(sendrequest, sizeof(buffer));
+            char c;
+            int n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                sendrequest[n++] = c;
+            }
+            if (strcmp(sendrequest, "sendfile") == 0){
+                bzero(sendrequest, sizeof(buffer));
+                n = 0;
+                while (read(socket, &c, 1) != 0 && c != ':'){
+                    sendrequest[n++] = c;
+                }
+                long file_size = strtol(sendrequest, NULL, 0);
+                FILE* add = fopen(filepath, "w");
+                if (add == NULL){
+                    printf("something went wrong with opening adding file %s\n");
+                    write(socket, "done:done", 9);
+                    close(socket);
+                    exit(1);
+                }
+                while (file_size > 0 && read(socket, &c, 1) != 0){
+                    fwrite(&c, 1, 1, add);
+                    file_size--;
+                }
+                fclose(add);
+            }
+            if (mode == 'A'){
+                testadd(project, filepath);
+            }
+            int version = atoi(version_s);
+            increment_version_number(version, project, filepath, hash);
+        } else if (mode == 'D'){
+            delete_line_from_manifest(project, filepath, hash);
+        }
+    }
+    remove(commit);
+}
+
+void push(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    //Error checking to see if project exists on server
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+    int n = 0;
+    char c;
+    bzero(path, sizeof(path));
+    char host[PATH_MAX];
+    while (true){
+        while (read(socket, &c, 1) != 0 && c != ':'){
+            path[n++] = c;
+        }
+        
+        if (strcmp(path, "requestfile") == 0){
+            bzero(path, sizeof(path));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            write_bytes_to_socket(path, socket, true);
+        } else if (strcmp(path, "done") == 0){
+            break;
+        } else if (strcmp(path, "host") == 0){
+            bzero(path, sizeof(path));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            strcpy(host, path);
+            //Check if server has .Commit for this host
+            if (!file_exists(host)){
+                write(socket, "fail:", 5);
+                break;
+            }
+            //Check if both .Commits are the same
+        
+            FILE* clientcommit = fopen(".tempCommit", "w");
+            bzero(path, sizeof(path));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                path[n++] = c;
+            }
+            if (strcmp(path, "sendfile") == 0){
+                bzero(path, sizeof(path));
+                n = 0;
+                while (read(socket, &c, 1) != 0 && c != ':'){
+                    path[n++] = c;
+                }
+                long length = strtol(path, NULL, 0);
+                while (length > 0 && read(socket, &c, 1) != 0){
+                    fwrite(&c, 1, 1, clientcommit);
+                    length--;
+                }
+                //Client commit is now the same as the .Commit on the client, check to see if its the same as the server commit.
+                FILE* localCommit = fopen(host, "r");
+                if (!file_same(clientcommit, localCommit)){
+                    //Expire all other commits...meaning delete all other
+                    remove(".tempCommit");
+                    expire_all_other_commits(host);
+                    applyCommit(host, project, socket);
+                    fclose(localCommit);
+                }
+                write(socket, "done:", 5);
+            }
+            fclose(clientcommit);
+            break;
+        }
+        bzero(path, sizeof(path));
+        n = 0;
+    }
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -534,7 +1015,8 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             commit(project_name, socket);
         } else if (strcmp(buffer, "push") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            push(project_name, socket);
         } else if (strcmp(buffer, "create") == 0){
             read(socket, project_name, sizeof(project_name));
             create(project_name, socket);

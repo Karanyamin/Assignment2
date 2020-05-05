@@ -1,4 +1,5 @@
-2
-3 project4 ./project4/garbage.txt b286ca91803ead550fdeda2232c23469d37a1300
-1 project4 ./project4/moregarabge.txt 46124cdc883ed82a01cfbe1670f9ae6de3286492
-4 project4 ./project4/drake.txt e94d69886d3361b4904b6d58f941d17bb6fe8d6b
+4
+5 project4 ./project4/garbage.txt f3345fbc8e6446dbb4f23e1d69a3a837b3cd8052
+3 project4 ./project4/moregarabge.txt cc7b91ee4078cdc8c9a70e531364cbbc6b353079
+4 project4 ./project4/testingFile.txt 263116d1bc956c85abcf90c332b0ba399e290377
+1 project4 ./project4/selena.txt 5b45c808fac54b3d035b6a7243c7dbb058ed38c7

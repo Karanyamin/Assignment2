@@ -21,7 +21,9 @@
 long get_file_length(char* file);
 bool is_file_empty(char* file);
 void testadd(char* project, char* filename);
+void change_update(FILE* update, char* name);
 char* int_to_string(long num, bool delim);
+void update_manifest_version(char* project, char* newversion);
 
 typedef struct node {
     char* filePath;
@@ -591,6 +593,21 @@ void get_client_and_server_manifests(manifestNode** serverhead, manifestNode** c
     close(fd);
 }
 
+void change_update(FILE* update, char* name){
+    long length = ftell(update);
+    char* temp = malloc(sizeof(char) * (length+1));
+    bzero(temp, sizeof(char) * (length+1));
+    rewind(update);
+    fread(temp, 1, length, update);
+    char* delim = "\n";
+    char* token = strtok(temp, delim);
+    token = strtok(NULL, delim);
+    if (token == NULL){
+        int fd = open(name, O_RDWR | O_TRUNC);
+        close(fd);
+    }
+}
+
 void testupdate(int socket, char* project){
     char buffer[PATH_MAX];
     char c;
@@ -638,24 +655,39 @@ void testupdate(int socket, char* project){
                 remove(buffer);
                 printf("Up to Date\n");
             } else { //test for the three partial cases
+                int version = ptr_s->version;
+                char* version_s = int_to_string(version, true);
                 ptr_c = clienthead;
                 bzero(buffer, sizeof(buffer));
                 strcpy(buffer, ".");
                 append_file_path(buffer, project);
                 append_file_path(buffer, ".Update");
-                FILE* update = fopen(buffer, "w");
+                FILE* update = fopen(buffer, "w+");
+                version_s[strlen(version_s) - 1] = '\n';
+                fputs(version_s, update);
                 delete_last_file_path(buffer, ".Update");
                 append_file_path(buffer, ".Conflict");
-                FILE* conflict = fopen(buffer, "w");
+                FILE* conflict = fopen(buffer, "w+");
                 while (ptr_c != NULL){
                     manifest_case_selection(ptr_c->version, ptr_c->project, ptr_c->file, ptr_c->hash, serverhead, update, conflict);
                     ptr_c = ptr_c->next;
                 }
-                fclose(update);
-                fclose(conflict);
-                if (is_file_empty(buffer)){
+                
+                if (is_file_empty(buffer)){ //Checks if .Conflict is empty
+                    remove(buffer);
+                    //Add project version to .Update
+                    delete_last_file_path(buffer, ".Conflict");
+                    append_file_path(buffer, ".Update");
+                    change_update(update, buffer);
+                } else {
+                    //.Conflict is not empty, remove .Update
+                    delete_last_file_path(buffer, ".Conflict");
+                    append_file_path(buffer, ".Update");
                     remove(buffer);
                 }
+                
+                fclose(update);
+                fclose(conflict);
             }
             sendfile = false;
         }
@@ -868,15 +900,21 @@ void manifest_case_selection_commit(int version, char* project, char* file, char
                 //compare live hash to hash in client manifest
                 if (strcmp(livehash, hash) != 0){
                     //Client and server manifest match but live hash is different than client manifest
+                    char livehashcopy[NAME_MAX];
+                    strcpy(livehashcopy, livehash);
                     bzero(livehash, sizeof(livehash));
                     strcpy(livehash, "M ");
                     strcat(livehash, file);
                     printf("%s\n", livehash);
                     strcat(livehash, " ");
-                    strcat(livehash, ptr->hash);
+                    strcat(livehash, livehashcopy);
+                    strcat(livehash, " ");
+                    char* temp = int_to_string(++version, false);
+                    strcat(livehash, temp);
                     strcat(livehash, "\n");
+                    free(temp);
                     fwrite(livehash, 1, strlen(livehash), commit);
-                    increment_version_number(++version, project, file, hash);
+                    increment_version_number(version, project, file, livehashcopy);
                     strcpy(ptr->project, "done");
                     return;
                 }
@@ -887,6 +925,8 @@ void manifest_case_selection_commit(int version, char* project, char* file, char
                 strcpy(buffer, ".");
                 append_file_path(buffer, project);
                 append_file_path(buffer, ".Commit");
+                fclose(commit);
+                close(socket);
                 remove(buffer);
                 exit(1);
             }
@@ -902,6 +942,10 @@ void manifest_case_selection_commit(int version, char* project, char* file, char
                     printf("%s\n", buffer);
                     strcat(buffer, " ");
                     strcat(buffer, head->hash);
+                    strcat(buffer, " ");
+                    char* temp = int_to_string(head->version, false);
+                    strcat(buffer, temp);
+                    free(temp);
                     strcat(buffer, "\n");
                     fwrite(buffer, 1, strlen(buffer), commit);
                     //I am not incrementing version value because the file DNE on client manifest
@@ -921,9 +965,13 @@ void manifest_case_selection_commit(int version, char* project, char* file, char
         printf("%s\n", buffer);
         strcat(buffer, " ");
         strcat(buffer, hash); //Is this suppose to be the server hash or the client hash?
+        strcat(buffer, " ");
+        char* temp = int_to_string(++version, false);
+        strcat(buffer, temp);
+        free(temp);
         strcat(buffer, "\n");
         fwrite(buffer, 1, strlen(buffer), commit);
-        increment_version_number(++version, project, file, hash);
+        increment_version_number(version, project, file, hash);
     }
 }
 
@@ -1035,12 +1083,18 @@ void testcommit(int socket, char* project){
                 close(socket);
                 exit(1);
             }
+            int version = ptr_c->version + 1;
+            char* version_s = int_to_string(version, true);
+            version_s[strlen(version_s) - 1] = '\n';
+            update_manifest_version(project, version_s);
             ptr_c = client;
             bzero(buffer, sizeof(buffer));
             strcpy(buffer, ".");
             append_file_path(buffer, project);
             append_file_path(buffer, ".Commit");
-            FILE* commit = fopen(buffer, "w");
+            FILE* commit = fopen(buffer, "w+");
+            fputs(version_s, commit);
+            free(version_s);
             /*
             delete_last_file_path(buffer, ".Commit");
             append_file_path(buffer, ".Conflict");
@@ -1050,6 +1104,8 @@ void testcommit(int socket, char* project){
                 manifest_case_selection_commit(ptr_c->version, ptr_c->project, ptr_c->file, ptr_c->hash, server, commit, socket);
                 ptr_c = ptr_c->next;
             }
+            //Check if commit file is empty, if so delete it
+            change_update(commit, buffer);
             fclose(commit);
             char host[PATH_MAX];
             bzero(host, sizeof(host));
@@ -1066,6 +1122,48 @@ void testcommit(int socket, char* project){
         bzero(buffer, sizeof(buffer));
         n = 0;
     }
+
+
+}
+
+void update_manifest_version(char* project, char* newversion){
+    char buffer[PATH_MAX];
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Manifest");
+
+    long length = get_file_length(buffer);
+    char* oldstream = malloc(sizeof(char) * (length+1));
+    bzero(oldstream, sizeof(char) * (length+1));
+
+    FILE* manifestFD = fopen(buffer, "r");
+    if (manifestFD == NULL){
+        printf("error in opening manifest\n");
+        return;
+    }
+    fread(oldstream, 1, length, manifestFD);
+
+    char* token = strtok(oldstream, "\n");
+    char* newstream = malloc(sizeof(char) * (length+1));
+    bzero(newstream, sizeof(char) * (length+1));
+
+    strcat(newstream, newversion);
+    strcat(newstream, "\n");
+
+    while((token = strtok(NULL, "\n")) != NULL){
+        strcat(newstream, token);
+        strcat(newstream, "\n");
+    }
+    FILE* newManifestFD = fopen(buffer, "w");
+    if (newManifestFD == NULL){
+        printf("error in opening new manifest\n");
+        return;
+    }
+    int newSize = strlen(newstream);
+    fwrite(newstream, 1, newSize, newManifestFD);
+    fclose(manifestFD);
+    fclose(newManifestFD);
 
 
 }
@@ -1114,6 +1212,14 @@ void testupgrade(int socket, char* project){
         exit(1); 
     }
     bzero(buffer, sizeof(buffer));
+
+    //Update the client manifest version
+    fgets(buffer, length, update);
+    char* delim_special = "\n";
+    char* token_special = strtok(buffer, delim_special);
+    update_manifest_version(project, token_special);
+    bzero(buffer, sizeof(buffer));
+
     while (fgets(buffer, length, update) != NULL){
         char* delim = " \n";
         char* token = strtok(buffer, delim);
@@ -1181,6 +1287,66 @@ void testupgrade(int socket, char* project){
     write(socket, "done:", 5);
 }
 
+void testpush(int socket, char* project){
+    char buffer[PATH_MAX];
+    read(socket, buffer, sizeof(buffer));
+    //Checks if project in server
+    if (strcmp(buffer, "fail") == 0){
+        printf("failure in finding project on server\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("success in finding project on server\n");
+    }
+    //Check if client has .Commit file
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, ".");
+    append_file_path(buffer, project);
+    append_file_path(buffer, ".Commit");
+    FILE* commit = fopen(buffer, "r");
+    if (commit == NULL){
+        printf("failure in finding .Commit on client\n");
+        write(socket, "done:done", 9);
+        close(socket);
+        exit(1);
+    }
+    //Send host to server so it can check if it has a .Commit file coressponding to us
+    char host[NAME_MAX];
+    bzero(host, sizeof(host));
+    strcpy(host, "host:");
+    strcat(host, getLocalHostIP());
+    strcat(host, ":");
+    write(socket, host, strlen(host));
+    write_bytes_to_socket(buffer, socket, true);
+    char c;
+    int n = 0;
+    bzero(buffer, sizeof(buffer));
+    while (true){
+        while(read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        }
+
+        if (strcmp(buffer, "done") == 0) break;
+        else if (strcmp(buffer, "fail") == 0) {
+            printf("Server failed\n");
+            break;
+        } else if (strcmp(buffer, "requestfile") == 0){
+            bzero(buffer, sizeof(buffer));
+            n = 0;
+            while (read(socket, &c, 1) != 0 && c != ':'){
+                buffer[n++] = c;
+            }
+            //buffer holds the name of the file we need to send
+            write_bytes_to_socket(buffer, socket, true); //sends the current version of the file
+        }
+
+        bzero(buffer, sizeof(buffer));
+        n = 0;
+    }
+    fclose(commit);
+}
+
 void handle_connection(int socket, char** argv){
     char command[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1205,13 +1371,21 @@ void handle_connection(int socket, char** argv){
     } else if (strcmp(argv[1], "upgrade") == 0){
         if (project_exists_on_client(argv[2])){
             testupgrade(socket, project_name);
+        } else {
+            write(socket, "done:", 5);
         }
     } else if (strcmp(argv[1], "commit") == 0){
         if (project_exists_on_client(argv[2])){
             testcommit(socket, project_name);
+        } else {
+            write(socket, "done:", 5);
         }
     } else if (strcmp(argv[1], "push") == 0){
-        return;
+        if (project_exists_on_client(argv[2])){
+            testpush(socket, project_name);
+        } else {
+            write(socket, "done:", 5);
+        }
     } else if (strcmp(argv[1], "create") == 0){
         if (!project_exists_on_client(argv[2])){
             testcreate(socket, project_name);
