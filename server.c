@@ -1288,9 +1288,13 @@ void history(char* project, int socket){
         return;
     }
     bzero(path, sizeof(path));
-    strcpy(path, "Project: ");
-    strcat(path, project);
-    strcat(path, " History\n:");
+    strcpy(path, project);
+    strcat(path, "'s History\n:");
+    write(socket, path, strlen(path));
+    bzero(path, sizeof(path));
+
+    fgets(path, length, history);
+    strcat(path, ":");
     write(socket, path, strlen(path));
     bzero(path, sizeof(path));
 
@@ -1343,7 +1347,8 @@ void handle_connection(int socket){
             read(socket, project_name, sizeof(project_name));
             currentversion(project_name, socket);
         } else if (strcmp(buffer, "history") == 0){
-            return;
+            read(socket, project_name, sizeof(project_name));
+            history(project_name, socket);
         } else if (strcmp(buffer, "rollback") == 0){
             read(socket, project_name, sizeof(project_name));
             read(socket, arg, sizeof(arg));
