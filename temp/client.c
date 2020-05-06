@@ -114,7 +114,7 @@ void valid_command(int argc, char** argv){
         return;
     } else if (strcmp(argv[1], "create") == 0 && argc == 3){
         return;
-    } else if (strcmp(argv[1], "destory") == 0 && argc == 3){
+    } else if (strcmp(argv[1], "destroy") == 0 && argc == 3){
         return;
     } else if (strcmp(argv[1], "add") == 0 && argc == 4){
         return;
@@ -1467,6 +1467,38 @@ void testrollback(int socket, char* project, char* version){
     }
 }
 
+void testhistory(int socket, char* project){
+    char buffer[PATH_MAX];
+    read(socket, buffer, sizeof(buffer));
+    //Checks if project in server
+    if (strcmp(buffer, "fail") == 0){
+        printf("failure in finding project on server\n");
+        write(socket, "done", 5);
+        close(socket);
+        exit(1);
+    } else if (strcmp(buffer, "success") == 0){
+        printf("success in finding project on server\n");
+    }
+
+    int n = 0;
+    char c;
+    bzero(buffer, sizeof(buffer));
+    while(true){
+        while(read(socket, &c, 1) != 0 && c != ':'){
+            buffer[n++] = c;
+        }
+
+        if (strcmp(buffer, "done") == 0) break;
+        else if (strcmp(buffer, "fail") == 0){
+            printf("No manifest inside %s\n", project);
+            return;
+        }
+        printf("%s", buffer);
+        bzero(buffer, sizeof(buffer));
+        n = 0;
+    }
+}
+
 void handle_connection(int socket, char** argv){
     char command[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1510,12 +1542,12 @@ void handle_connection(int socket, char** argv){
         if (!project_exists_on_client(argv[2])){
             testcreate(socket, project_name);
         }
-    } else if (strcmp(argv[1], "destory") == 0){
+    } else if (strcmp(argv[1], "destroy") == 0){
         testdestroy(socket, project_name);
     } else if (strcmp(argv[1], "currentversion") == 0){
         testcurrentversion(socket, project_name);
     } else if (strcmp(argv[1], "history") == 0){
-        return;
+        testhistory(socket, project_name);
     } else if (strcmp(argv[1], "rollback") == 0){
         strcpy(arg, argv[3]);
         write(socket, arg, sizeof(arg));

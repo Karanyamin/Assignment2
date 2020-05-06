@@ -140,6 +140,8 @@ bool in_ignore_list(char* name){
         return true; 
     } else if (is_IPv4_address(name)){
         return true;
+    } else if (strcmp(name, ".history") == 0){
+        return true;
     } else {
         return false;
     }
@@ -427,13 +429,22 @@ void create(char* project_name, int socket){
     strcpy(path, ".");
     append_file_path(path, project_name);
     append_file_path(path, ".Manifest");
+    //Creates the .Manifest file and puts it in the project
     int fd = open(path, O_WRONLY | O_CREAT, 00600);
     if (fd == -1){
         printf("The server failed to create the Manifest in the directory\n");
         return;
     }
+    delete_last_file_path(path, ".Manifest");
+    append_file_path(path, ".history");
+    int historyfd = open(path, O_WRONLY | O_CREAT, 00600);
+    if (historyfd == -1){
+        printf("The server failed to create the .history file in project %s\n", project_name);
+        return;
+    }
     write(fd, "1\n", 2);
     close(fd);
+    close(historyfd);
 }
 
 void update(char* project, int socket){
@@ -659,7 +670,7 @@ void recursive_duplicateDirectory(char* dirpath_a, char* dirpath_b){
     }
 
     while ((handle = readdir(dir_a)) != NULL){
-        if (!in_ignore_list(handle->d_name)){
+        if (!in_ignore_list(handle->d_name) || strcmp(handle->d_name, ".history") == 0){
             if (handle->d_type == DT_DIR){
                 append_file_path(dirpath_a, handle->d_name);
                 append_file_path(dirpath_b, handle->d_name);
@@ -900,13 +911,23 @@ void applyCommit(char* commit, char* project, int socket){
     bzero(buffer, sizeof(buffer));
     long length_of_commit = get_file_length(commit);
     FILE* commitfd = fopen(commit, "r");
-    fgets(buffer, length_of_commit, commitfd);
+    char historypath[PATH_MAX];
+    strcpy(historypath, ".");
+    append_file_path(historypath, project);
+    append_file_path(historypath, ".history");
+    FILE* history = fopen(historypath, "a"); // .history file to append each line to
+    bzero(historypath, sizeof(historypath));
+    strcpy(historypath, "Manifest version: ");
+    fgets(buffer, length_of_commit, commitfd); //buffer contains the first line of the .Commit which is the version number and newline
+    strcat(historypath, buffer);
+    fputs(historypath, history);
     char* delim_special = "\n";
     char* token_special = strtok(buffer, delim_special);
     update_manifest_version(project, token_special);
     bzero(buffer, sizeof(buffer));
     //The manifest now has the same version as the .Commit file indicated
     while (fgets(buffer, length_of_commit, commitfd) != NULL){
+        fputs(buffer, history);
         char* delim = " \n";
         char* token = strtok(buffer, delim);
         //Adds M, A, or D
@@ -948,6 +969,9 @@ void applyCommit(char* commit, char* project, int socket){
                     printf("something went wrong with opening adding file %s\n");
                     write(socket, "done:done", 9);
                     close(socket);
+                    fclose(add);
+                    fclose(commitfd);
+                    fclose(history);
                     exit(1);
                 }
                 while (file_size > 0 && read(socket, &c, 1) != 0){
@@ -965,6 +989,9 @@ void applyCommit(char* commit, char* project, int socket){
             delete_line_from_manifest(project, filepath, hash);
         }
     }
+    fputc('\n', history);
+    fclose(history);
+    fclose(commitfd);
 }
 
 void push(char* project, int socket){
@@ -1158,7 +1185,7 @@ void delete_higher_rollbacks(char* project, char* version){
     struct dirent * handle;
 
     while ((handle = readdir(dir)) != NULL){
-        if (!in_ignore_list(handle->d_name)){
+        if (!in_ignore_list(handle->d_name) && handle->d_type == DT_DIR){
             char copy[PATH_MAX];
             strcpy(copy, handle->d_name);
             char* delim = "_";
@@ -1187,7 +1214,7 @@ bool perform_rollback(char* project, char* version){
     struct dirent * handle;
 
     while ((handle = readdir(dir)) != NULL){
-        if (!in_ignore_list(handle->d_name)){
+        if (!in_ignore_list(handle->d_name) && handle->d_type == DT_DIR){
             char copy[PATH_MAX];
             strcpy(copy, handle->d_name);
             char* delim = "_";
@@ -1235,6 +1262,52 @@ void rollback(char* project, int socket, char* version){
     write(socket, "done:", 5);
 }
 
+void history(char* project, int socket){
+    char path[PATH_MAX];
+    bzero(path, sizeof(path));
+    //Error checking to see if project exists on server
+    if (!project_exists_on_server(project)){
+        strcpy(path, "fail");
+        write(socket, path, sizeof(path));
+        return;
+    } else {
+        strcpy(path, "success");
+        write(socket, path, sizeof(path));
+    }
+
+    //Open the manifest and feed into client
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".history");
+    long length = get_file_length(path);
+    FILE* history = fopen(path, "r");
+    if (history == NULL){
+        //No history file
+        write(socket, "fail:", 5);
+        return;
+    }
+    bzero(path, sizeof(path));
+    strcpy(path, "Project: ");
+    strcat(path, project);
+    strcat(path, " History\n:");
+    write(socket, path, strlen(path));
+    bzero(path, sizeof(path));
+
+    while (fgets(path, length, history) != NULL){
+        char buffer[PATH_MAX];
+        char* delim = " ";
+        char* token = strtok(path, delim); //Contains the operator
+        strcpy(buffer, token);
+        strcat(buffer, " ");
+        token = strtok(NULL, delim); //Contains the <file path>
+        strcat(buffer, token);
+        strcat(buffer, "\n:");
+        write(socket, buffer, strlen(buffer));
+    }
+    write(socket, "done:", 5);
+}
+
 void handle_connection(int socket){
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1263,7 +1336,7 @@ void handle_connection(int socket){
         } else if (strcmp(buffer, "create") == 0){
             read(socket, project_name, sizeof(project_name));
             create(project_name, socket);
-        } else if (strcmp(buffer, "destory") == 0){
+        } else if (strcmp(buffer, "destroy") == 0){
             read(socket, project_name, sizeof(project_name));
             destroy(project_name, socket);
         } else if (strcmp(buffer, "currentversion") == 0){
