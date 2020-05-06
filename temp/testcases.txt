@@ -1,0 +1,634 @@
+Assignment 2
+Karan Amin
+Saavi Dhingra
+
+In order to test our commands and ensure that they work, we created several test project files. Within each of the 
+test project files, we created random text files. Listed below is a thorough set of test cases that were run on our 
+code along with inputs and expected outputs. Aside from inputs and outputs for the Client Commands, we have also 
+provided additional outputs of other inputs. Based on the command given, the client may send different things to the 
+server. We have the server repository, and the temp directory, which is where the client repository is located. 
+
+------------------------------------------------------------------------------------------------------------------------
+
+To ensure the minimum requirements work, the code displays the following outputs:
+    - client announces completion of connection to server
+        CLIENT TERMINAL OUTPUT:
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+
+    - server announces acceptance of connection from client:
+        SERVER TERMINAL OUTPUT:
+            Server socket creation: SUCCESS
+            Binding Port: SUCCESS
+            Connection to client succeeded
+
+    - client disconnects (or is disconnected) from the server:
+        SERVER TERMINAL OUTPUT:    
+            Server socket creation: SUCCESS
+            Binding Port: FAILED
+
+    - server disconnects from a client:
+        CLIENT TERMINAL OUTPUT:
+            Client socket creation: SUCCESS
+            Connecting to Server: FAILED
+
+    - client displays error messages:
+        CLIENT TERMINAL OUTPUT:
+            Invalid command
+
+    - client displays informational messages about the status of an operation:
+        CLIENT TERMINAL OUTPUT:
+            failure in finding project on server
+            Project exists on client
+            
+    - client displays successful command completion messages:
+        CLIENT TERMINAL OUTPUT:
+            success in finding project on server
+            Connection to client succeeded
+
+------------------------------------------------------------------------------------------------------------------------
+ 
+Due to the fact that we're running both client and server on the same computer, we can use the following hostname:
+(General IP Address): 127.0.0.1
+
+We need to start our server, and this is done with the following command: ./server portnum
+To simulate both repository, we use another terminal and open the temp folder, which stores the client repository.
+
+If a command is not spelled properly, it will display "Invalid command". Below we test the 12 client commands. 
+
+------------------------------------------------------------------------------------------------------------------------
+
+CONFIGURE: ./client configure <IP/hostname> <port>
+
+    Initially, there isn't a .configure file. After running this command, the IP/hostname and port is written out to 
+    a ./.configure file. In this case, "127.0.0.1 1234" is stored. 
+        
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client configure 127.0.0.1 1234
+
+        output:
+            $ //new line is created
+
+    .configure:
+        127.0.0.1 1234
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client
+
+        output:
+            Client socket creation: SUCCESS
+            Connecting to Server: FAILED
+
+    SERVER TERMINAL:
+        input:
+            ./server
+
+        output:
+            Failed to provide port number
+
+-------------------------------------------------------
+
+CHECKOUT: ./client checkout <project name> 
+
+    Checkout only copies files listed inside the project manifest and not  everything inside the directory
+    from the project on the server over to the client. 
+    If the project is already in the client repository, is not found, server connection failed, or configure
+    was not called, checkout will fail. 
+
+     checkout they only want files listed inside the project manifest not just everything inside the directory
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client checkout project5
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+            Filepath [./project5/.Manifest] bytes [333]
+            Filepath [./project5/garbage.txt] bytes [39]
+            Filepath [./project5/moregarabge.txt] bytes [15]
+            Filepath [./project5/subdirectory/undersubdirectory.txt] bytes [13]
+            Filepath [./project5/testingFile.txt] bytes [2]
+
+    SERVER TERMINAL:
+        output:
+            Connection to client succeeded
+            Scanning this file ./project5/.Manifest for appending file to socket
+            Scanning this file ./project5/garbage.txt for appending file to socket
+            Scanning this file ./project5/moregarabge.txt for appending file to socket
+            Scanning this file ./project5/subdirectory/undersubdirectory.txt for appending file to socket
+            Scanning this file ./project5/testingFile.txt for appending file to socket
+            Scanning this file ./project5/.Manifest for writing bytes to socket
+            Scanning this file ./project5/garbage.txt for writing bytes to socket
+            Scanning this file ./project5/moregarabge.txt for writing bytes to socket
+            Scanning this file ./project5/subdirectory/undersubdirectory.txt for writing bytes to socket
+            Scanning this file ./project5/testingFile.txt for writing bytes to socket
+            Listening for requests...
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client checkout test1/subdirectory1
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            failure in finding project on server
+
+
+        input:
+            ./client checkout test1
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+
+
+        input:
+            ./client checkout test1
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: FAILED
+
+    SERVER TERMINAL:
+        output:
+            Error in get_file_length trying to open file
+            error in opening manifest
+            Error in getting number of files in project
+
+-------------------------------------------------------
+
+UPDATE: ./client update <project name>
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client update project4
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+            success in finding project on server
+            D ./project4/undersubdirectory.txt
+            M ./project4/selena.txt
+            M ./project4/moregarabge.txt
+
+    SERVER TERMINAL:
+        output:
+            Connection to client succeeded
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client update project5
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+            success in finding project on server
+
+-------------------------------------------------------
+
+UPGRADE: ./client upgrade <project name>
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+
+        output:
+
+    SERVER TERMINAL:
+        input:
+
+        output:
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client upgrade project5
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+            success in finding project on server
+            File ./project5/.Conflict does not exist
+            No .Update file in client
+            
+-------------------------------------------------------
+
+COMMIT: ./client commit <project name>
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client commit project4
+
+        output:
+        The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+            success in finding project on server
+            File ./project4/.Conflict does not exist
+            server
+            Version [4] Project [project4] Filepath [./project4/testingFile.txt] hash [263116d1bc956c85abcf90c332b0ba399e290377]
+            Version [1] Project [project4] Filepath [./project4/selena.txt] hash [5b45c808fac54b3d035b6a7243c7dbb058ed38c7]
+            Version [2] Project [project4] Filepath [./project4/moregarabge.txt] hash [46124cdc883ed82a01cfbe1670f9ae6de3286492]
+            Version [5] Project [project4] Filepath [./project4/garbage.txt] hash [f3345fbc8e6446dbb4f23e1d69a3a837b3cd8052]
+            Version [4] Project [] Filepath [] hash []
+            client
+            Version [1] Project [project4] Filepath [./project4/undersubdirectory.txt] hash [c9941d27a376c5b6d12895b8a1dcdbc7f82a124e]
+            Version [1] Project [project4] Filepath [./project4/selena.txt] hash [5b45c808fac54b3d035b6a7243c7dbb058ed38c7]
+            Version [4] Project [project4] Filepath [./project4/testingFile.txt] hash [263116d1bc956c85abcf90c332b0ba399e290377]
+            Version [3] Project [project4] Filepath [./project4/moregarabge.txt] hash [cc7b91ee4078cdc8c9a70e531364cbbc6b353079]
+            Version [5] Project [project4] Filepath [./project4/garbage.txt] hash [f3345fbc8e6446dbb4f23e1d69a3a837b3cd8052]
+            Version [4] Project [] Filepath [] hash []
+            A ./project4/undersubdirectory.txt
+            Server successfully saved the active commit
+
+    SERVER TERMINAL:
+        output:
+            Connection to client succeeded
+        
+    ON FAILURE:
+    CLIENT TERMINAL:
+
+        input:
+            ./client commit project5
+        
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+
+-------------------------------------------------------
+
+PUSH: ./client push <project name>
+
+ON SUCCESS:
+CLIENT TERMINAL:
+    input:
+        ./client push project4  
+    
+    output:
+        The hostname is 127.0.0.1
+        The hostname is 127.0.0.1
+        The port is 12345
+        Client socket creation: SUCCESS
+        Connecting to Server: SUCCESS
+        Project exists on client
+        success in finding project on server
+        server succeeded
+
+SERVER TERMINAL:
+    output:
+        output:
+        Duplicating files [./project4/.Manifest]
+        Duplicating files [./project4/drake.txt]
+        Duplicating files [./project4/garbage.txt]
+        Duplicating files [./project4/moregarabge.txt]
+        Duplicating files [./project4/subdirectory/undersubdirectory.txt]
+        Duplicating files [./project4/testingFile.txt]
+        The hash for the file [./project4/undersubdirectory.txt] is [c9941d27a376c5b6d12895b8a1dcdbc7f82a124e]
+
+
+ON FAILURE:
+CLIENT TERMINAL:
+    input:
+        ./client push project4
+
+    output:
+        The hostname is 127.0.0.1
+        The port is 12345
+        Client socket creation: SUCCESS
+        Connecting to Server: SUCCESS
+        Project exists on client
+        success in finding project on server
+        failure in finding .Commit on client
+
+    input:
+        ./client push project4
+
+    output:
+        The hostname is 127.0.0.1
+        The port is 12345
+        Client socket creation: SUCCESS
+        Connecting to Server: SUCCESS
+        Project exists on client
+
+-------------------------------------------------------
+
+CREATE: ./client create <project name>
+
+    Using the create command, we can create a new folder test1. This folder is created in both the server and client repository. 
+    In each folder, a .Manifest is automatically created. The client sets up a local version of the project folder in its current 
+    directory and places the .Manifest sent by the server in it. 
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input: 
+            ./client create test1
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            project does not exist on create...attempting to create project
+            success in finding project on server
+            Filepath [./test1/.Manifest] bytes [2]
+
+    SERVER TERMINAL:
+        output:
+            Connection to client succeeded
+            Scanning this file ./test1/.Manifest for counting number of files
+            Scanning this file ./test1/.Manifest for appending file to socket
+            Scanning this file ./test1/.Manifest for writing bytes to socket
+
+    .Manifest
+        1
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input: 
+            ./client create test1
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            Project exists on client
+        
+    .Manifest
+        1
+
+-------------------------------------------------------
+
+DESTROY: ./client destroy <project name>
+
+ON SUCCESS:
+CLIENT TERMINAL:
+    input:
+        ./client destroy project2
+    output:
+        The hostname is 127.0.0.1
+        The port is 12345
+        Client socket creation: SUCCESS
+        Connecting to Server: SUCCESS
+        success in finding project on server
+        The server has successfuly destroyed the project
+
+SERVER TERMINAL:
+    output:
+        Deleting files [./project2/subFolderInProject2/emptyFile.txt]
+        Deleting files [./project2/subFolderInProject2/testFileInSubFolderofProject2.txt]
+        Deleting files [./project2/test1.txt]
+
+ON FAILURE:
+CLIENT TERMINAL:
+    input:
+        ./client destroy project2
+    output:
+        The hostname is 127.0.0.1
+        The port is 12345
+        Client socket creation: SUCCESS
+        Connecting to Server: SUCCESS
+        failure in finding project on server
+
+-------------------------------------------------------
+
+ADD: ./client add <project name> <filename>
+
+    We need make sure that the text file is in the project. If done successfully, the client will 
+    add an entry for the file to its .Manifest with a new version number and hashcode.
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client add test1 ./test1/testFile.txt
+
+        output:
+            Project exists on client
+
+    .Manifest
+        1
+        1 test1 ./test1/testFile.txt e51a3b6a89b2218f71f89deb67dfce20cdb24ae4      
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client add test2 testcase.txt
+
+        output:
+            Project exists on client
+            File testcase.txt does not exist
+
+-------------------------------------------------------
+
+REMOVE: ./client remove <project name> <filename>
+
+    The client will remove the entry for the given file from its own .Manifest. If the project does not
+    exist, .Manifest remains the same, and the command has failed. 
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client remove test2 ./test2/testFile2.txt
+
+        output:
+            Project exists on client
+
+    .Manifest
+        1
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client remove test4 ./test4/testFile2.txt
+
+        output:
+            Project does not exist on client
+
+    .Manifest
+        1
+
+-------------------------------------------------------
+
+CURRENTVERSION: ./client currentversion <project name>
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client currentversion project5
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+            List of files under project project5
+            File Version = [5], File path = [./project5/garbage.txt]
+            File Version = [2], File path = [./project5/moregarabge.txt]
+            File Version = [4], File path = [./project5/testingFile.txt]
+            File Version = [1], File path = [./project5/subdirectory/undersubdirectory.txt]
+
+        .Manifest
+            4
+            5 project5 ./project5/garbage.txt f3345fbc8e6446dbb4f23e1d69a3a837b3cd8052
+            2 project5 ./project5/moregarabge.txt 46124cdc883ed82a01cfbe1670f9ae6de3286492
+            4 project5 ./project5/testingFile.txt 263116d1bc956c85abcf90c332b0ba399e290377
+            1 project5 ./project5/subdirectory/undersubdirectory.txt c9941d27a376c5b6d12895b8a1dcdbc7f82a124e
+
+    ON FAILURE:
+        input:
+            ./client currentversion project8
+        
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            failure in finding project on server
+
+-------------------------------------------------------
+
+HISTORY: ./client history <project name>
+
+    In our .history file, we have project2's history, which consists of the following:
+        4
+        D ./project4/undersubdirectory.txt c9941d27a376c5b6d12895b8a1dcdbc7f82a124e 1
+        M ./project4/moregarabge.txt 46124cdc883ed82a01cfbe1670f9ae6de3286492 2
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:
+            ./client history project2
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+            project2's History
+            4
+            D ./project4/undersubdirectory.txt
+            M ./project4/moregarabge.txt
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client history project5
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+            No manifest inside project5
+
+        input:
+            ./client history randomproject
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 12345
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            failure in finding project on server
+
+    SERVER TERMINAL:
+        output:
+            Error in get_file_length trying to open file  
+
+-------------------------------------------------------
+
+ROLLBACK: ./client rollback <project name> <version>
+
+    This command focuses on deleting any other project with a version that’s higher.
+    We began with 4 different files (project10, project10_1, project10_2, project10_3).
+    Different versions of the projects are differentiated by the underscore, so project10 
+    was the current version, project10_1 was the first version, project10_2 was the second
+    version, and project10_3 was the third version. 
+
+    ON SUCCESS:
+    CLIENT TERMINAL:
+        input:  
+            ./client rollback project10 2
+        
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+
+    SERVER TERMINAL:
+        output:
+            Connection to client succeeded
+            Deleting files [./project10_3/.Manifest]
+            Deleting files [./project10/.Manifest]
+            Listening for requests...
+
+    ON FAILURE:
+    CLIENT TERMINAL:
+        input:
+            ./client rollback project4 5
+
+        output: 
+            The hostname is 127.0.0.1
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            success in finding project on server
+            rollback failed
+        
+        input:
+            ./client rollback invalidproject 5
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: SUCCESS
+            failure in finding project on server
+        
+        input:
+            ./client rollback project4 5
+
+        output:
+            The hostname is 127.0.0.1
+            The port is 1234
+            Client socket creation: SUCCESS
+            Connecting to Server: FAILED
+
+------------------------------------------------------------------------------------------------------------------------
