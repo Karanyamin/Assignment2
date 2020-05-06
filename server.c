@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
 
 long get_file_length(char* file);
 char* int_to_string(long num, bool delim);
@@ -252,9 +253,10 @@ int get_number_of_files_in_project(char* project, int* size){
     }
    
     bzero(buffer, sizeof(buffer));
-
-    while (fgets(buffer, length, manifestFD) != NULL){
-        (*size)++;
+    char c;
+    while ((c = fgetc(manifestFD)) != EOF){
+        if (c == '\n')
+            (*size)++;
     }   
     
     fclose(manifestFD);
@@ -360,6 +362,15 @@ void checkout(char* project, int socket){
     } else {
         strcpy(path, "success");
         write(socket, path, sizeof(path));
+    }
+    bzero(path, sizeof(path));
+    strcpy(path, ".");
+    append_file_path(path, project);
+    append_file_path(path, ".Manifest");
+    if (!file_exists(path)){
+        printf("No manifest in project\n");
+        write(socket, "done:", 5);
+        return;
     }
     //writing send command to socket
     write(socket, "sendfile:", 9);
@@ -1312,7 +1323,11 @@ void history(char* project, int socket){
     write(socket, "done:", 5);
 }
 
-void handle_connection(int socket){
+void* handle_connection(void* socketptr){
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+    pthread_mutex_lock(&mutex);
+    int socket = *((int*)socketptr);
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
     char arg[NAME_MAX];
@@ -1360,6 +1375,8 @@ void handle_connection(int socket){
     }
 
     close(socket);
+    pthread_mutex_unlock(&mutex);
+    return NULL;
 }
 
 
@@ -1413,7 +1430,12 @@ int main(int argc, char** argv){
         } else {
             printf("Connection to client succeeded\n");
         }
-        handle_connection(clientSocket);
+        
+        pthread_t newthread;
+        int* pclient = malloc(sizeof(int));
+        *pclient = clientSocket; 
+        pthread_create(&newthread, NULL, handle_connection, pclient);
+        //handle_connection(clientSocket);
     }
 
 
