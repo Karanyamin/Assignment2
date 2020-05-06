@@ -1324,9 +1324,9 @@ void history(char* project, int socket){
 }
 
 void* handle_connection(void* socketptr){
-    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    //pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-    pthread_mutex_lock(&mutex);
+    //pthread_mutex_lock(&mutex);
     int socket = *((int*)socketptr);
     char buffer[NAME_MAX];
     char project_name[NAME_MAX];
@@ -1375,7 +1375,7 @@ void* handle_connection(void* socketptr){
     }
 
     close(socket);
-    pthread_mutex_unlock(&mutex);
+    //pthread_mutex_unlock(&mutex);
     return NULL;
 }
 
