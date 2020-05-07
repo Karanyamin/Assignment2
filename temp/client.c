@@ -1539,7 +1539,7 @@ void testcurrentversion(int socket, char* project){
             buffer[n++] = c;
         }
 
-        if (strcmp(buffer, "done") == 0) break;
+        if (strcmp(buffer, "done") == 0) return;
         else if (strcmp(buffer, "fail") == 0){
             printf("No manifest inside %s\n", project);
             return;
@@ -1570,7 +1570,7 @@ void testrollback(int socket, char* project, char* version){
             buffer[n++] = c;
         }
 
-        if (strcmp(buffer, "done") == 0) break;
+        if (strcmp(buffer, "done") == 0) return;
         else if (strcmp(buffer, "fail") == 0){
             printf("rollback failed\n", project);
             return;
@@ -1587,9 +1587,7 @@ void testhistory(int socket, char* project){
     //Checks if project in server
     if (strcmp(buffer, "fail") == 0){
         printf("failure in finding project on server\n");
-        write(socket, "done", 5);
-        close(socket);
-        exit(1);
+        return;
     } else if (strcmp(buffer, "success") == 0){
         printf("success in finding project on server\n");
     }
@@ -1597,14 +1595,19 @@ void testhistory(int socket, char* project){
     int n = 0;
     char c;
     bzero(buffer, sizeof(buffer));
+    printf("\n");
     while(true){
         while(read(socket, &c, 1) != 0 && c != ':'){
             buffer[n++] = c;
         }
 
-        if (strcmp(buffer, "done") == 0) break;
-        else if (strcmp(buffer, "fail") == 0){
-            printf("No manifest inside %s\n", project);
+        if (strcmp(buffer, "done") == 0){
+            return;
+        } else if (strcmp(buffer, "fail") == 0){
+            printf("No .history inside %s\n", project);
+            return;
+        } else if (strcmp(buffer, "empty") == 0){
+            printf("Project [%s] has no history\n", project);
             return;
         }
         printf("%s", buffer);

@@ -1326,11 +1326,11 @@ void currentversion(char* project, int socket){
         char buffer[PATH_MAX];
         strcpy(buffer, "File Version = [");
         char* delim = " ";
-        char* token = strtok(path, delim);
+        char* token = strtok(path, delim); //Holds the file version
         strcat(buffer, token);
         strcat(buffer, "], File path = [");
         token = strtok(NULL, delim); //Throw away the project info
-        token = strtok(NULL, delim);
+        token = strtok(NULL, delim); //Holds the filepath
         strcat(buffer, token);
         strcat(buffer, "]\n:");
         write(socket, buffer, strlen(buffer));
@@ -1410,6 +1410,7 @@ void rollback(char* project, int socket, char* version){
     bzero(path, sizeof(path));
     //Error checking to see if project exists on server
     if (!project_exists_on_server(project)){
+        printf("%s does not exist on the server\n", project);
         strcpy(path, "fail");
         write(socket, path, sizeof(path));
         return;
@@ -1419,10 +1420,27 @@ void rollback(char* project, int socket, char* version){
     }
     //printf("Version %s\n", version);
     if (!perform_rollback(project, version)){
+        printf("Server failed to rollback %s\n", project);
         write(socket, "fail:", 5);
         return;
     }
     write(socket, "done:", 5);
+}
+
+bool is_file_empty(char* file){ //If file does not exist it will return true
+    FILE* fp = fopen(file, "r+");
+    if (fp == NULL){
+        //File does not exist
+        return true;
+    } else {
+        fseek(fp, 0, SEEK_END);
+        long size = ftell(fp);
+        if (size == 0){
+            return true;
+        } else {
+            return false;
+        }
+    }
 }
 
 void history(char* project, int socket){
@@ -1430,6 +1448,7 @@ void history(char* project, int socket){
     bzero(path, sizeof(path));
     //Error checking to see if project exists on server
     if (!project_exists_on_server(project)){
+        printf("%s does not exist on server\n", project);
         strcpy(path, "fail");
         write(socket, path, sizeof(path));
         return;
@@ -1438,15 +1457,21 @@ void history(char* project, int socket){
         write(socket, path, sizeof(path));
     }
 
-    //Open the manifest and feed into client
+    //Open the history and feed into client
     bzero(path, sizeof(path));
     strcpy(path, ".");
     append_file_path(path, project);
     append_file_path(path, ".history");
+    if (file_exists(path) && is_file_empty(path)){
+        printf(".history for file %s is empty\n", project);
+        write(socket, "empty:", 6);
+        return;
+    }
     long length = get_file_length(path);
     FILE* history = fopen(path, "r");
     if (history == NULL){
         //No history file
+        printf("No .history in %s\n", project);
         write(socket, "fail:", 5);
         return;
     }
@@ -1456,23 +1481,28 @@ void history(char* project, int socket){
     write(socket, path, strlen(path));
     bzero(path, sizeof(path));
 
-    fgets(path, ++length, history);
-    strcat(path, ":");
-    write(socket, path, strlen(path));
-    bzero(path, sizeof(path));
-
     while (fgets(path, length, history) != NULL){
-        char buffer[PATH_MAX];
-        char* delim = " ";
-        char* token = strtok(path, delim); //Contains the operator
-        strcpy(buffer, token);
-        strcat(buffer, " ");
-        token = strtok(NULL, delim); //Contains the <file path>
-        strcat(buffer, token);
-        strcat(buffer, "\n:");
-        write(socket, buffer, strlen(buffer));
+        char copy[PATH_MAX];
+        strcpy(copy, path);
+        char* token = strtok(copy, " ");
+        if (token != NULL && strlen(token) == 1 && (token[0] == 'A' || token[0] == 'D' || token[0] == 'M')){
+            char buffer[PATH_MAX];
+
+            strcpy(buffer, token);
+            strcat(buffer, " ");
+            token = strtok(NULL, " "); //Contains the <file path>
+            strcat(buffer, token);
+            strcat(buffer, "\n:");
+            write(socket, buffer, strlen(buffer));
+        } else {
+            strcat(path, ":");
+            write(socket, path, strlen(path));
+        }
+        bzero(path, sizeof(path));
     }
+    printf("before done\n");
     write(socket, "done:", 5);
+    printf("After done\n");
 }
 
 pthread_mutex_t select_mutex(char* project){
