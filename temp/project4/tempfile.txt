@@ -1,7 +1,0 @@
-3
-5 project4 ./project4/garbage.txt f3345fbc8e6446dbb4f23e1d69a3a837b3cd8052
-5 project4 ./project4/moregarabge.txt cc7b91ee4078cdc8c9a70e531364cbbc6b353079
-3 project4 ./project4/testingFile.txt 263116d1bc956c85abcf90c332b0ba399e290377
-1 project4 ./project4/selena.txt 5b45c808fac54b3d035b6a7243c7dbb058ed38c7
-
-
